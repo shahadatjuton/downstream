@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 13px system-ui, Segoe UI, sans-serif; margin: 0; width: 360px; color: #1f2328; background: #fff; }
+  @media (prefers-color-scheme: dark) { body { color: #e6e8eb; background: #1c1f24; } .item { border-color: #30353d !important; } .muted { color: #9aa3af !important; } button.secondary { background: #23272e !important; color: #e6e8eb !important; border-color: #30353d !important; } }
+  header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid #e3e6ea; }
+  header img { width: 20px; height: 20px; }
+  header b { flex: 1; }
+  .status { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #e4effa; color: #2d7dd2; }
+  .status.off { background: #fbe9e9; color: #d64545; }
+  section { padding: 10px 12px; }
+  .muted { color: #6b7280; font-size: 12px; }
+  .item { display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid #e3e6ea; border-radius: 8px; margin-bottom: 6px; }
+  .item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 11px; }
+  button { font: inherit; border: 1px solid #2d7dd2; background: #2d7dd2; color: #fff; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+  button:hover { background: #2468b3; }
+  button.secondary { background: #f6f7f9; color: #1f2328; border-color: #e3e6ea; }
+  button.wide { width: 100%; margin-top: 4px; }
+  label.toggle { display: flex; align-items: center; gap: 8px; padding: 4px 0; cursor: pointer; }
+  footer { padding: 8px 12px; border-top: 1px solid #e3e6ea; display: flex; gap: 8px; }
+  footer button { flex: 1; }
+  #msg { font-size: 12px; min-height: 16px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <img src="icons/32.png" alt="">
+  <b>IDM Clone</b>
+  <span id="status" class="status">checking…</span>
+</header>
+<section>
+  <div id="page-row">
+    <button id="page-video" class="wide">Download video from this page</button>
+    <div class="muted" style="margin-top:4px">Uses yt-dlp: YouTube, Vimeo, Twitter, TikTok and 1000+ sites.</div>
+  </div>
+  <div id="msg"></div>
+</section>
+<section>
+  <div class="muted" id="media-title">Media detected on this tab</div>
+  <div id="list"></div>
+</section>
+<section>
+  <label class="toggle"><input type="checkbox" id="intercept"> Catch browser downloads</label>
+  <label class="toggle"><input type="checkbox" id="sniff"> Detect videos on pages</label>
+</section>
+<footer>
+  <button id="open" class="secondary">Open IDM Clone</button>
+</footer>
+<script src="popup.js"></script>
+</body>
+</html>

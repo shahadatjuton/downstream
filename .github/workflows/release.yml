@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build installer and portable exe
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Check tag matches version
+        shell: pwsh
+        run: |
+          $v = python -c "import idm; print(idm.__version__)"
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match __version__ $v" }
+
+      - name: Build (PyInstaller + Inno Setup)
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
+
+      - name: Package extension
+        shell: pwsh
+        run: Compress-Archive -Path extension/* -DestinationPath release/idm-clone-extension.zip
+
+      - name: Smoke test the portable exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "release/IDM Clone.exe" -PassThru
+          Start-Sleep -Seconds 12
+          if ($p.HasExited) { throw "IDM Clone.exe exited early with code $($p.ExitCode)" }
+          Get-Process | Where-Object { $_.ProcessName -like "IDM Clone*" } | Stop-Process -Force
+
+      - name: Smoke test the installer (silent install + uninstall)
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem release/IDM-Clone-Setup-*.exe | Select-Object -First 1
+          Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\IDM Clone\IDM Clone.exe"
+          if (-not (Test-Path $exe)) { throw "installer did not place the app at $exe" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\IDM Clone\host\com.idmclone.host.json")) { throw "host manifest missing" }
+          Get-Process | Where-Object { $_.ProcessName -like "IDM Clone*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Start-Process -FilePath "$env:LOCALAPPDATA\Programs\IDM Clone\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES" -Wait
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/IDM-Clone-Setup-*.exe
+            release/IDM Clone.exe
+            release/idm-host.exe
+            release/idm-clone-extension.zip
+          generate_release_notes: true

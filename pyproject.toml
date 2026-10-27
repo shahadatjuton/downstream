@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "idm-clone"
+dynamic = ["version"]
+description = "Open-source download manager for Windows: segmented downloads, resume, browser integration, and video downloads"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Shahadat Hossain" }]
+requires-python = ">=3.11"
+keywords = ["download-manager", "downloader", "idm", "yt-dlp", "pyside6", "segmented-download"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: File Transfer Protocol (FTP)",
+]
+dependencies = [
+    "aiohttp>=3.9",
+    "PySide6>=6.6",
+    "yt-dlp>=2024.1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "pyinstaller>=6"]
+
+[project.urls]
+Homepage = "https://github.com/shahadatjuton/idm-clone"
+Issues = "https://github.com/shahadatjuton/idm-clone/issues"
+
+[project.scripts]
+idm-clone = "idm.__main__:main"
+idm-clone-host = "idm.native_host:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "idm.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "--basetemp=.pytest_tmp -q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["build", "dist", "release", "release-next"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "N"]
+ignore = [
+    "N802",  # Qt overrides use camelCase (paintEvent, rowCount, ...)
+    "N815",
+    "E501",  # long lines in UI strings are fine; the formatter handles code
+    "SIM102",
+    "SIM108",
+    "SIM105",  # explicit try/except/pass reads better around I/O cleanup
+    "SIM112",  # env var names like ProgramFiles are Windows-cased
+    "UP042",   # str-Enum keeps JSON persistence simple
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "SIM117"]

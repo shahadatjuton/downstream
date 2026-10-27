@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+
+# Build output
+build/
+dist/
+release/
+release-next/
+*.spec
+
+# Local state
+*.part
+.DS_Store
+Thumbs.db
