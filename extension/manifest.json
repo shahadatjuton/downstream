@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "IDM Clone",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Send downloads and page videos to the IDM Clone desktop download manager.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwt0LkiXLZvvaE3EONwL3W6cS4r93gE5EM68Bi52DxNkJWjo2YTaeqUWGjaOaTTR4QtkB5qZIQnOolyDBDBSaLFDmdze/LuzzBgI6r1EWpQsm1OtsuO1embT02MH+YG5ZEi9R7qggCuJhUclxc6QJbigz6B7J/DlOpWTaVQ/HhwRSxCpWDQE4DzKKykdC6lThWTibQW4kB2qFtF9VMuZMMQ7qFGC7XLztoyabX3kfizXHevro6yV/xzl8Ze+vz19vjCnRo//KLPVptjUIosz+yaLq4/YDIp94luJVaWeWonsIHI74UhUvvd/6mMlrGQJ6D3/tqwjlkhVnWteZeiXQdQIDAQAB",
   "permissions": [
@@ -33,5 +33,18 @@
     "32": "icons/32.png",
     "48": "icons/48.png",
     "128": "icons/128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
 }

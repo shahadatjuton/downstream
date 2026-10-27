@@ -52,6 +52,8 @@ class Settings:
     start_with_windows: bool = False  # HKCU Run key (set by the app or the installer)
     start_minimized: bool = False  # start in the tray
     check_updates: bool = True  # ask GitHub for a newer release once per start
+    first_run_done: bool = False  # the welcome / browser-setup window has been shown
+    extension_seen: bool = False  # the browser extension has talked to this app at least once
 
     @classmethod
     def path(cls) -> Path:

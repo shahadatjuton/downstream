@@ -55,20 +55,32 @@ Grab the latest build from the [Releases](https://github.com/shahadatjuton/idm-c
 Requires Windows 10 or 11 (64-bit). Nothing else to install; ffmpeg can be added later from
 inside the app for HD video.
 
-> The builds are not code-signed yet, so SmartScreen may show "Windows protected your PC" on
-> first run. Click *More info → Run anyway*. The source is open; build it yourself if you prefer.
+> The builds are not code-signed yet. SmartScreen may show "Windows protected your PC" on
+> first run: click *More info → Run anyway*. If **Smart App Control** is turned on
+> (Windows 11, *Settings → Privacy & security → Windows Security → App & browser control*),
+> it refuses unsigned apps outright with "An Application Control policy has blocked this
+> file"; it cannot be bypassed per app. Until signed builds ship, run from source on such
+> machines (`python -m idm`), which uses the signed Python interpreter.
 
 ## Browser setup (once)
 
-The installer registers the native host for Chrome, Edge and Brave. Loading the extension
-itself is a one-time manual step because it is not on the Chrome Web Store yet:
+The installer registers the native host for Chrome, Edge and Brave, and the app opens a
+**welcome window on first start** that walks you through the one remaining step. Loading
+the extension is manual because it is not on the Chrome Web Store yet:
 
-1. In IDM Clone, open **Tools → Browser setup…** and click **Open extensions page**
-   (or go to `chrome://extensions`).
-2. Turn on **Developer mode**, click **Load unpacked**, and choose the folder shown in the
-   dialog (**Copy path** puts it on your clipboard).
-3. Pin the icon. Downloads and page videos are now sent to IDM Clone; toggle either behaviour
-   in the extension popup.
+1. In the welcome window (or **Tools → Browser setup…** later) click **Open Google Chrome
+   extensions** / **Open Microsoft Edge extensions**.
+2. Turn on **Developer mode**, click **Load unpacked**, and choose the folder shown
+   (**Copy path** puts it on your clipboard).
+3. The window turns green the moment the extension connects.
+
+From then on, like IDM:
+
+- a **Download** button appears over any video you hover on a web page: direct files are
+  fetched straight away, players such as YouTube open the quality picker;
+- downloads you start in the browser are caught and queued here, with cookies and referrer;
+- the extension popup lists the media streams detected on the current tab and has toggles
+  for each behaviour.
 
 Running from source instead? `scripts\register-browser.ps1 -Dev` registers the host against
 your checkout.

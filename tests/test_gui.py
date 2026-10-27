@@ -35,7 +35,13 @@ def server():
 
 @pytest.fixture
 def window(app, tmp_path: Path):
-    settings = Settings(download_dir=str(tmp_path / "dl"), connections_per_download=4, use_categories=True)
+    settings = Settings(
+        download_dir=str(tmp_path / "dl"),
+        connections_per_download=4,
+        use_categories=True,
+        first_run_done=True,
+        check_updates=False,
+    )
     mgr = DownloadManager(settings, state_path=tmp_path / "state.json")
     mgr.start()
     theme = apply_theme(app)

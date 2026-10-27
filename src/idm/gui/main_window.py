@@ -278,6 +278,8 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self.add_url(initial_url))
         if manager.settings.check_updates:
             QTimer.singleShot(4000, lambda: self.check_for_updates(silent=True))
+        if not manager.settings.first_run_done:
+            QTimer.singleShot(700, self.show_welcome)
 
     # ------------------------------------------------------------- building
     def _icon(self, name: str) -> QIcon:
@@ -329,7 +331,20 @@ class MainWindow(QMainWindow):
         AboutDialog(self.theme, self).exec()
 
     def open_browser_setup(self) -> None:
-        BrowserSetupDialog(self.theme, host_registered(), self).exec()
+        BrowserSetupDialog(self.theme, self.manager, host_registered(), self).exec()
+        self._refresh_setup_card()
+
+    def show_welcome(self) -> None:
+        """First run after install: guide the user through loading the browser extension."""
+        self._show_from_tray()
+        s = self.manager.settings
+        if s.extension_seen and host_registered():
+            self.manager.update_settings(replace(s, first_run_done=True))
+            return
+        dlg = BrowserSetupDialog(self.theme, self.manager, host_registered(), self, welcome=True)
+        dlg.exec()
+        if dlg.dont_show_again() or self.manager.settings.extension_seen:
+            self.manager.update_settings(replace(self.manager.settings, first_run_done=True))
         self._refresh_setup_card()
 
     def check_for_updates(self, silent: bool = False) -> None:
@@ -511,6 +526,7 @@ class MainWindow(QMainWindow):
         head.setObjectName("title")
         card.addWidget(head)
         self.setup_browser = QLabel()
+        self.setup_ext = QLabel()
         self.setup_ffmpeg = QLabel()
         setup_btns = QHBoxLayout()
         self.setup_browser_btn = QPushButton("Browser setup…")
@@ -521,6 +537,7 @@ class MainWindow(QMainWindow):
         setup_btns.addWidget(self.setup_ffmpeg_btn)
         setup_btns.addStretch(1)
         card.addWidget(self.setup_browser)
+        card.addWidget(self.setup_ext)
         card.addWidget(self.setup_ffmpeg)
         card.addLayout(setup_btns)
 
@@ -535,7 +552,14 @@ class MainWindow(QMainWindow):
 
     def _refresh_setup_card(self) -> None:
         browser_ok = host_registered()
+        ext_ok = self.manager.settings.extension_seen
         ffmpeg_ok = self.manager.ffmpeg is not None
+        self.setup_ext.setText(
+            "✓  Browser extension connected"
+            if ext_ok
+            else "•  Browser extension not loaded yet (Download button on videos, caught downloads)"
+        )
+        self.setup_ext.setObjectName("ok" if ext_ok else "warn")
         self.setup_browser.setText(
             "✓  Browser extension host is registered"
             if browser_ok
@@ -548,10 +572,10 @@ class MainWindow(QMainWindow):
             else "•  ffmpeg missing: YouTube limited to 360p (one-click install, 90 MB)"
         )
         self.setup_ffmpeg.setObjectName("ok" if ffmpeg_ok else "warn")
-        self.setup_browser_btn.setVisible(not browser_ok)
+        self.setup_browser_btn.setVisible(not (browser_ok and ext_ok))
         self.setup_ffmpeg_btn.setVisible(not ffmpeg_ok)
-        self.setup_card.setVisible(not (browser_ok and ffmpeg_ok))
-        for w in (self.setup_browser, self.setup_ffmpeg):
+        self.setup_card.setVisible(not (browser_ok and ext_ok and ffmpeg_ok))
+        for w in (self.setup_browser, self.setup_ext, self.setup_ffmpeg):
             w.style().unpolish(w)
             w.style().polish(w)
 
@@ -735,6 +759,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(
                     self, "ffmpeg installed", "ffmpeg is ready. HD video formats are now available."
                 )
+            return
+        if name == "extension-connected":
+            self._refresh_setup_card()
+            self.statusBar().showMessage(f"Browser extension connected (v{task.filename})", 6000)
             return
         if name == "ffmpeg-failed":
             QMessageBox.warning(self, "ffmpeg", task.error or "could not install ffmpeg")

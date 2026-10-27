@@ -1,4 +1,4 @@
-"""About, Check-for-updates, and Browser-setup dialogs."""
+"""About, Check-for-updates, and Browser-setup / Welcome dialogs."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..engine import DownloadManager
+from .icons import icon
 from .theme import Theme
 
 REPO = "shahadatjuton/idm-clone"
@@ -39,6 +42,7 @@ def _vtuple(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
 
 
+# ------------------------------------------------------------------ About
 class AboutDialog(QDialog):
     def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -83,6 +87,7 @@ class AboutDialog(QDialog):
         root.addWidget(buttons)
 
 
+# --------------------------------------------------------- Update checker
 class UpdateChecker(QObject):
     """Asks the GitHub releases API for the newest tag. Emits on the GUI thread."""
 
@@ -123,75 +128,217 @@ class UpdateChecker(QObject):
             QMessageBox.information(parent, "Check for updates", f"You are up to date (IDM Clone {__version__}).")
 
 
+# ------------------------------------------------------------ Browsers
+BROWSERS = (
+    # (label, exe candidates, extensions page)
+    ("Google Chrome", ("Google\\Chrome\\Application\\chrome.exe",), "chrome://extensions"),
+    ("Microsoft Edge", ("Microsoft\\Edge\\Application\\msedge.exe",), "edge://extensions"),
+    ("Brave", ("BraveSoftware\\Brave-Browser\\Application\\brave.exe",), "brave://extensions"),
+)
+
+
+def installed_browsers() -> list[tuple[str, str, str]]:
+    """[(label, exe path, extensions url)] for the browsers found on this machine."""
+    found = []
+    roots = [
+        os.environ.get("ProgramFiles", ""),
+        os.environ.get("ProgramFiles(x86)", ""),
+        os.environ.get("LOCALAPPDATA", ""),
+    ]
+    for label, rels, page in BROWSERS:
+        for root in roots:
+            if not root:
+                continue
+            for rel in rels:
+                exe = Path(root) / rel
+                if exe.exists():
+                    found.append((label, str(exe), page))
+                    break
+            else:
+                continue
+            break
+    return found
+
+
 def extension_dir() -> Path:
     base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[3]
     return base / "extension"
 
 
-class BrowserSetupDialog(QDialog):
-    """Step-by-step: the installer registered the host; the user still loads the extension once."""
+def open_extensions_page(exe: str, page: str) -> bool:
+    try:
+        subprocess.Popen([exe, page])
+        return True
+    except OSError:
+        return False
 
-    def __init__(self, theme: Theme, registered: bool, parent: QWidget | None = None) -> None:
+
+class BrowserSetupDialog(QDialog):
+    """Guided one-time extension setup. Also used as the first-run welcome window.
+
+    The installer already registered the native host; the user only has to load the
+    unpacked extension once. The dialog turns green as soon as the extension says hello.
+    """
+
+    def __init__(
+        self,
+        theme: Theme,
+        manager: DownloadManager,
+        registered: bool,
+        parent: QWidget | None = None,
+        *,
+        welcome: bool = False,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Browser setup")
-        self.setMinimumWidth(560)
+        self.theme = theme
+        self.manager = manager
+        self.welcome = welcome
+        self.setWindowTitle("Welcome to IDM Clone" if welcome else "Browser setup")
+        self.setMinimumWidth(600)
         ext = extension_dir()
-        status = QLabel(
-            "✓  Native host registered. Chrome, Edge and Brave can talk to IDM Clone."
-            if registered
-            else "•  Native host not registered yet. Run scripts\\register-browser.ps1, or reinstall with the "
-            "'Browser integration' option ticked."
-        )
-        status.setObjectName("ok" if registered else "warn")
-        status.setWordWrap(True)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 18, 22, 14)
+        root.setSpacing(12)
+
+        if welcome:
+            head = QHBoxLayout()
+            pic = QLabel()
+            pic.setPixmap(parent.windowIcon().pixmap(48, 48) if parent else QApplication.windowIcon().pixmap(48, 48))
+            pic.setFixedSize(48, 48)
+            t = QLabel("IDM Clone is installed. One more step connects it to your browser.")
+            t.setObjectName("title")
+            t.setWordWrap(True)
+            head.addWidget(pic)
+            head.addWidget(t, 1)
+            root.addLayout(head)
+            why = QLabel(
+                "With the extension, downloads you start in the browser are caught here, a <b>Download</b> "
+                "button appears over videos on web pages, and YouTube and 1000+ sites can be saved in the "
+                "quality you choose."
+            )
+            why.setObjectName("muted")
+            why.setWordWrap(True)
+            root.addWidget(why)
+
+        # Status card
+        card = QFrame()
+        card.setObjectName("card")
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(14, 10, 14, 10)
+        cl.setSpacing(4)
+        self.host_status = QLabel()
+        self.host_status.setWordWrap(True)
+        self.ext_status = QLabel()
+        self.ext_status.setWordWrap(True)
+        cl.addWidget(self.host_status)
+        cl.addWidget(self.ext_status)
+        root.addWidget(card)
+        self._registered = registered
+
         steps = QLabel(
             "<b>Load the extension (one time)</b><br>"
-            "1. Click <b>Open extensions page</b> below (or type <code>chrome://extensions</code>).<br>"
+            "1. Open your browser's extensions page with a button below.<br>"
             "2. Turn on <b>Developer mode</b> (top right).<br>"
-            "3. Click <b>Load unpacked</b> and choose the folder below (use <b>Copy path</b>).<br>"
-            "4. Pin the IDM Clone icon. Downloads and page videos are now sent here."
+            "3. Click <b>Load unpacked</b> and choose this folder (use <b>Copy path</b>):"
         )
         steps.setWordWrap(True)
+        root.addWidget(steps)
+        path_row = QHBoxLayout()
         path = QLabel(str(ext))
         path.setObjectName("link")
         path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         path.setWordWrap(True)
-        open_btn = QPushButton("Open extensions page")
-        open_btn.setObjectName("primary")
-        open_btn.clicked.connect(self._open_extensions_page)
         copy_btn = QPushButton("Copy path")
         copy_btn.setAutoDefault(False)
-        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(str(ext)))
+        copy_btn.clicked.connect(lambda: (QApplication.clipboard().setText(str(ext)), copy_btn.setText("Copied ✓")))
         folder_btn = QPushButton("Show folder")
         folder_btn.setAutoDefault(False)
         folder_btn.clicked.connect(lambda: _open(ext))
-        row = QHBoxLayout()
-        row.addWidget(open_btn)
-        row.addWidget(copy_btn)
-        row.addWidget(folder_btn)
-        row.addStretch(1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        buttons.accepted.connect(self.accept)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 14)
-        root.setSpacing(12)
-        root.addWidget(status)
-        root.addWidget(steps)
-        root.addWidget(path)
-        root.addLayout(row)
-        root.addWidget(buttons)
+        path_row.addWidget(path, 1)
+        path_row.addWidget(copy_btn)
+        path_row.addWidget(folder_btn)
+        root.addLayout(path_row)
 
-    @staticmethod
-    def _open_extensions_page() -> None:
-        # chrome:// URLs cannot be opened through the default-browser handler; try the browsers directly.
-        for exe in ("chrome", "msedge", "brave"):
-            try:
-                subprocess.Popen([exe, "chrome://extensions" if exe != "msedge" else "edge://extensions"])
-                return
-            except OSError:
-                continue
-        webbrowser.open("https://github.com/shahadatjuton/idm-clone#browser-setup-once")
+        browsers = installed_browsers()
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        if browsers:
+            for i, (label, exe, page) in enumerate(browsers):
+                b = QPushButton(
+                    icon("program", theme.text if i else QApplication.palette().base().color(), 16),
+                    f"Open {label} extensions",
+                )
+                if i == 0:
+                    b.setObjectName("primary")
+                    b.setDefault(True)
+                else:
+                    b.setAutoDefault(False)
+                b.clicked.connect(lambda _c=False, e=exe, p=page: self._open(e, p))
+                row.addWidget(b)
+        else:
+            none = QLabel(
+                "No Chrome, Edge or Brave installation was found. Install one, then open its extensions page."
+            )
+            none.setObjectName("warn")
+            none.setWordWrap(True)
+            row.addWidget(none)
+        row.addStretch(1)
+        root.addLayout(row)
+
+        self.later = QCheckBox("Don't show this again")
+        bottom = QHBoxLayout()
+        if welcome:
+            bottom.addWidget(self.later)
+        bottom.addStretch(1)
+        done = QPushButton("Done" if welcome else "Close")
+        done.setAutoDefault(False)
+        done.clicked.connect(self.accept)
+        bottom.addWidget(done)
+        root.addLayout(bottom)
+
+        self._refresh_status()
+        self._poll = QTimer(self)
+        self._poll.setInterval(1500)
+        self._poll.timeout.connect(self._refresh_status)
+        self._poll.start()
+
+    def _open(self, exe: str, page: str) -> None:
+        if not open_extensions_page(exe, page):
+            QMessageBox.warning(self, "Browser", f"Could not start {exe}")
+
+    def _refresh_status(self) -> None:
+        from .main_window import host_registered
+
+        reg = self._registered or host_registered()
+        self._registered = reg
+        self.host_status.setText(
+            "✓  Native host registered: Chrome, Edge and Brave can reach IDM Clone."
+            if reg
+            else "•  Native host not registered. Reinstall with 'Browser integration' ticked, or run scripts\\register-browser.ps1."
+        )
+        self.host_status.setObjectName("ok" if reg else "warn")
+        seen = self.manager.settings.extension_seen
+        self.ext_status.setText(
+            "✓  Extension connected. Downloads and page videos are sent to IDM Clone."
+            if seen
+            else "•  Extension not loaded yet. Follow the steps below; this line turns green automatically."
+        )
+        self.ext_status.setObjectName("ok" if seen else "warn")
+        for w in (self.host_status, self.ext_status):
+            w.style().unpolish(w)
+            w.style().polish(w)
+
+    def accept(self) -> None:
+        self._poll.stop()
+        super().accept()
+
+    def reject(self) -> None:
+        self._poll.stop()
+        super().reject()
+
+    def dont_show_again(self) -> bool:
+        return self.later.isChecked()
 
 
 def _open(path: Path) -> None:

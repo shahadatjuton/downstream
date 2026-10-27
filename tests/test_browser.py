@@ -47,7 +47,13 @@ def ipc_dir(tmp_path: Path, monkeypatch):
 
 @pytest.fixture
 def manager(tmp_path: Path, ipc_dir):
-    settings = Settings(download_dir=str(tmp_path / "dl"), connections_per_download=4, use_categories=False)
+    settings = Settings(
+        download_dir=str(tmp_path / "dl"),
+        connections_per_download=4,
+        use_categories=False,
+        first_run_done=True,
+        check_updates=False,
+    )
     m = DownloadManager(settings, state_path=tmp_path / "state.json", enable_ipc=True)
     m.start()
     yield m
@@ -303,3 +309,47 @@ def test_add_smart_routes_pages_to_media_and_files_to_engine(manager, server, tm
 
     forced = manager.add_smart(server.url("/page"), kind="file", filename="page.html").result(30)
     assert forced.kind == "file"  # explicit 'file' still wins when the caller insists
+
+
+def test_extension_hello_marks_connected_and_first_run_welcome(app, manager, ipc_dir, monkeypatch, tmp_path):
+    from idm.gui import dialogs as dialogs_mod
+    from idm.gui import main_window as mw
+
+    assert manager.settings.extension_seen is False
+    manager.settings.first_run_done = False
+    shown: list[bool] = []
+
+    def fake_exec(dlg) -> int:
+        shown.append(dlg.welcome)
+        # Simulate the user loading the extension while the welcome window is open:
+        # the extension says hello to the app over IPC.
+        reply = ipc_mod.send({"cmd": "hello", "version": "0.2.0"})
+        assert reply["ok"]
+        wait_until(app, lambda: manager.settings.extension_seen, 5, "extension_seen flag")
+        dlg._refresh_status()
+        assert dlg.ext_status.text().startswith("✓")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(dialogs_mod.BrowserSetupDialog, "exec", fake_exec)
+    monkeypatch.setattr(mw, "host_registered", lambda: True)
+    win = MainWindow(manager, apply_theme(app))
+    win.show()
+    wait_until(app, lambda: shown == [True], 10, "welcome dialog on first run")
+    wait_until(app, lambda: manager.settings.first_run_done, 5, "first_run_done persisted")
+    pump(app, 0.3)
+    assert win.setup_ext.text().startswith("✓")
+    win._timer.stop()
+    manager.on_event = None
+    manager.on_ipc = None
+    win.close()
+
+    # Second window: no welcome any more.
+    shown.clear()
+    win2 = MainWindow(manager, apply_theme(app))
+    win2.show()
+    pump(app, 1.2)
+    assert shown == []
+    win2._timer.stop()
+    manager.on_event = None
+    manager.on_ipc = None
+    win2.close()

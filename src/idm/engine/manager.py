@@ -485,6 +485,13 @@ class DownloadManager:
         cmd = msg.get("cmd")
         if cmd == "ping":
             return {"ok": True, "pid": __import__("os").getpid()}
+        if cmd == "hello":
+            # The browser extension announces itself (on install and on browser start).
+            if not self.settings.extension_seen:
+                self.settings.extension_seen = True
+                self.settings.save()
+            self._emit("extension-connected", DownloadTask(url="", filename=str(msg.get("version", "")), dest_dir=""))
+            return {"ok": True}
         if cmd in ("add", "show"):
             if self.on_ipc:
                 loop = asyncio.get_running_loop()

@@ -173,7 +173,13 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 });
 
 // ---------------------------------------------------------------- context menus
+chrome.runtime.onStartup.addListener(() => {
+  sendToApp({ cmd: "hello", version: chrome.runtime.getManifest().version }).then(() => {});
+});
+
 chrome.runtime.onInstalled.addListener(() => {
+  // Tell the desktop app we exist, so its setup screen can show "extension connected".
+  sendToApp({ cmd: "hello", version: chrome.runtime.getManifest().version }).then(() => {});
   chrome.contextMenus.create({ id: "dl-link", title: "Download link with IDM Clone", contexts: ["link"] });
   chrome.contextMenus.create({ id: "dl-media", title: "Download with IDM Clone", contexts: ["video", "audio", "image"] });
   chrome.contextMenus.create({ id: "dl-page", title: "Download video from this page with IDM Clone", contexts: ["page", "frame"] });
@@ -200,6 +206,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse(await addDownload(msg.item));
     } else if (msg.type === "page-video") {
       sendResponse(await addDownload({ url: msg.pageUrl, referrer: msg.pageUrl, pageUrl: msg.pageUrl, kind: "media" }));
+    } else if (msg.type === "video-button") {
+      // From the floating button over a <video>. Direct media file -> file download; otherwise (blob:/MSE
+      // players such as YouTube) hand the page to yt-dlp through the app's quality picker.
+      const src = msg.src || "";
+      let direct = /^https?:/i.test(src);
+      try { if (direct && SKIP_HOSTS.test(new URL(src).hostname)) direct = false; } catch (_e) { direct = false; }
+      if (direct) {
+        sendResponse(await addDownload({ url: src, referrer: msg.pageUrl, pageUrl: msg.pageUrl, kind: "file" }));
+      } else {
+        sendResponse(await addDownload({ url: msg.pageUrl, referrer: msg.pageUrl, pageUrl: msg.pageUrl, kind: "media" }));
+      }
     } else if (msg.type === "ping") {
       sendResponse(await sendToApp({ cmd: "host-ping" }));
     } else if (msg.type === "show-app") {
