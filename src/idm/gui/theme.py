@@ -80,7 +80,9 @@ def detect_theme(app: QApplication | None = None, mode: str = "auto") -> Theme:
         return LIGHT
     if mode == "dark":
         return DARK
-    app = app or QApplication.instance()
+    if app is None:
+        inst = QApplication.instance()
+        app = inst if isinstance(inst, QApplication) else None
     if app is None:
         return LIGHT
     window = app.palette().color(QPalette.ColorRole.Window)

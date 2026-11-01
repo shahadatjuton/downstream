@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import time
@@ -23,6 +24,38 @@ MIN_SPLIT = 1024 * 1024  # a segment is only split if both halves would be >= th
 SPEED_WINDOW = 3.0  # seconds
 BURST_CREDIT = 0.25  # seconds of unused limit a throttled download may catch up on
 UNKNOWN = -1
+
+
+CHECKSUM_ALGOS = {32: "md5", 40: "sha1", 64: "sha256", 128: "sha512"}
+
+
+def parse_checksum(text: str) -> tuple[str, str] | None:
+    """'sha256:abc…', 'ABC…' (algorithm from the length) or 'abc…  file.iso' (sha256sum line) ->
+    (algorithm, lowercase hex). None when empty; ValueError when it is not a known digest."""
+    raw = (text or "").strip()
+    if not raw:
+        return None
+    algo = ""
+    if ":" in raw:
+        algo, _, raw = raw.partition(":")
+        algo = algo.strip().lower().replace("-", "")
+    digest = raw.split()[0].lower() if raw.split() else ""
+    if not digest or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError("a checksum is hexadecimal (MD5, SHA-1, SHA-256 or SHA-512)")
+    inferred = CHECKSUM_ALGOS.get(len(digest))
+    if not algo:
+        algo = inferred or ""
+    if algo not in CHECKSUM_ALGOS.values() or (inferred and inferred != algo):
+        raise ValueError(f"{len(digest)} hex digits do not match a known digest")
+    return algo, digest
+
+
+def hash_file(path: Path, algo: str) -> str:
+    h = hashlib.new(algo)
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class Status(str, Enum):
@@ -83,6 +116,8 @@ class DownloadTask:
     origin: str = ""  # the link the user gave (MEGA link, magnet, .torrent) when `url` is derived from it
     crypto_key: str = ""  # MEGA: base64 file key (the download is decrypted while it streams in)
     thumbnail: str = ""  # media: thumbnail URL, so it can be saved later from the context menu
+    checksum: str = ""  # 'sha256:<hex>' expected digest; verified before the .part is renamed
+    checksum_result: str = ""  # '' | 'ok' | 'mismatch' (last verification)
 
     # Runtime-only fields (not persisted)
     speed: float = field(default=0.0, compare=False)
@@ -218,6 +253,8 @@ class TaskRunner:
                 task.segments = []  # cannot resume; start over next time
             return
         if self._all_done():
+            if task.checksum and not await self._verify_checksum():
+                return
             try:
                 await self._finalize_async()
             except OSError as exc:
@@ -303,6 +340,33 @@ class TaskRunner:
             # Unknown size: done if the single segment read to EOF without being stopped.
             return not self._stop.is_set() and self._error is None
         return all(s.done for s in self.task.segments)
+
+    async def _verify_checksum(self) -> bool:
+        """Hash the finished .part against task.checksum. On mismatch the task becomes ERROR and the
+        .part is kept, so the user can inspect it or retry."""
+        task = self.task
+        try:
+            parsed = parse_checksum(task.checksum)
+        except ValueError as exc:
+            task.status = Status.ERROR
+            task.error = f"bad checksum: {exc}"
+            return False
+        if parsed is None:
+            return True
+        algo, expected = parsed
+        loop = asyncio.get_running_loop()
+        task.note = "verifying checksum"
+        got = await loop.run_in_executor(None, hash_file, task.part_path, algo)
+        if got != expected:
+            task.checksum_result = "mismatch"
+            task.status = Status.ERROR
+            task.error = f"checksum mismatch: expected {algo} {expected[:16]}…, file has {got[:16]}…"
+            task.note = ""
+            log.warning("%r: %s", task.filename, task.error)
+            return False
+        task.checksum_result = "ok"
+        task.note = "checksum verified"
+        return True
 
     async def _finalize_async(self) -> None:
         """Hook for subclasses that need work between the last byte and the rename."""

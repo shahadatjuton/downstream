@@ -74,6 +74,11 @@ def run_gui(argv: list[str] | None = None, initial_url: str = "", minimized: boo
         log.info("another instance is running; handed over and exiting")
         return 0
 
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
+
+    # Fractional scaling (125 %, 150 %) renders crisp instead of being rounded to the nearest integer.
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("IDM Clone")
     app.setApplicationVersion(__version__)

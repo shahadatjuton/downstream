@@ -20,6 +20,10 @@ from tests.test_gui import pump, select_filter, sidebar_counts, visible_names, w
 from tests.test_mega import FILE_LINK, FILE_SIZE, PLAIN, FakeMega
 from tests.test_torrent import PAYLOAD, Seeder
 
+# libtorrent sessions pick free ports; two test processes doing that at once can collide, so every
+# torrent test runs on the same xdist worker (--dist loadgroup in pyproject).
+pytestmark = pytest.mark.xdist_group("torrent")
+
 pytest.importorskip("libtorrent")
 
 

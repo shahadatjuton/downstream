@@ -220,7 +220,9 @@ class TaskProxyModel(QSortFilterProxyModel):
     def filterAcceptsRow(self, source_row: int, parent: QModelIndex) -> bool:  # noqa: N802
         if not self._needle:
             return True
-        task = self.sourceModel().task_at(source_row)
+        source = self.sourceModel()
+        assert isinstance(source, TaskTableModel)
+        task = source.task_at(source_row)
         if task is None:
             return False
         hay = f"{task.filename} {task.url} {task.title}".lower()

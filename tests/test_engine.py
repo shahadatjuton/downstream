@@ -95,6 +95,11 @@ class LocalServer:
     async def _ytdlp_dl(self, request: web.Request) -> web.Response:
         return web.Response(body=self.ytdlp_zip, content_type="application/zip")
 
+    async def _redirect_host(self, request: web.Request) -> web.Response:
+        """Sends the client to the same server under a different host name (localhost vs 127.0.0.1)."""
+        self.requests.append(dict(request.headers))
+        raise web.HTTPFound(f"http://localhost:{self.port}/file")
+
     async def _norange(self, request: web.Request) -> web.StreamResponse:
         self.requests.append(dict(request.headers))
         resp = web.StreamResponse(status=200, headers={"Content-Length": str(FILE_SIZE)})
@@ -129,6 +134,7 @@ class LocalServer:
         app.router.add_get("/file", self._file)
         app.router.add_get("/norange", self._norange)
         app.router.add_get("/auth", self._auth)
+        app.router.add_get("/redirect-host", self._redirect_host)
         app.router.add_get("/ytdlp/latest", self._ytdlp_latest)
         app.router.add_get("/ytdlp/dl", self._ytdlp_dl)
         app.router.add_get("/chunked", self._chunked)

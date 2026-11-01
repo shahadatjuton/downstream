@@ -234,7 +234,7 @@ def build_format_choices(formats: list[dict], ffmpeg: bool) -> list[MediaFormat]
     """Turn yt-dlp's raw format list into a short menu: merged qualities (ffmpeg), progressive, audio."""
     choices: list[MediaFormat] = []
     heights = sorted(
-        {f.get("height") for f in formats if f.get("height") and f.get("vcodec") not in (None, "none")}, reverse=True
+        {int(f["height"]) for f in formats if f.get("height") and f.get("vcodec") not in (None, "none")}, reverse=True
     )
     progressive = [
         f

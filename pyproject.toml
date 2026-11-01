@@ -34,7 +34,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "pyinstaller>=6"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3", "ruff>=0.5", "mypy>=1.10", "pyinstaller>=6"]
 
 [project.urls]
 Homepage = "https://github.com/shahadatjuton/idm-clone"
@@ -53,9 +53,21 @@ version = { attr = "idm.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.mypy]
+python_version = "3.11"
+files = ["src/idm"]
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "idm.gui.*"
+# PySide6 stubs reject idioms that work at runtime: keyword signal connects in constructors,
+# QModelIndex-only overrides, and chained setters in lambdas.
+disable_error_code = ["override", "call-overload", "func-returns-value"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "--basetemp=.pytest_tmp -q"
+addopts = "--basetemp=.pytest_tmp -q -n 4 --dist loadgroup"  # parallel; torrent tests share one worker; -n 0 = serial
 testpaths = ["tests"]
 
 [tool.ruff]

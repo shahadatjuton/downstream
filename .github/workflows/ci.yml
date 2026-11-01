@@ -31,6 +31,9 @@ jobs:
           ruff check .
           ruff format --check .
 
+      - name: Type check
+        run: mypy
+
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen

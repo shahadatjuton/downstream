@@ -71,7 +71,7 @@ def describe_torrent_file(data: bytes) -> dict[str, Any]:
     import libtorrent as lt
 
     try:
-        ti = lt.torrent_info(lt.bdecode(data))
+        ti = lt.torrent_info(lt.bdecode(data))  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         raise TorrentError(f"not a valid .torrent file: {exc}") from exc
     fs = ti.files()
@@ -124,7 +124,7 @@ class TorrentEngine:
                         self.lt.proxy_type_t.socks5 if p.scheme.startswith("socks") else self.lt.proxy_type_t.http
                     )
                     sp["proxy_peer_connections"] = True
-            self._ses = self.lt.session(sp)
+            self._ses = self.lt.session(sp)  # type: ignore[call-overload]
             for router in (
                 ("router.bittorrent.com", 6881),
                 ("router.utorrent.com", 6881),

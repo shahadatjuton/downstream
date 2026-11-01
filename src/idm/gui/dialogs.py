@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import webbrowser
@@ -34,6 +35,38 @@ REPO_URL = f"https://github.com/{REPO}"
 RELEASES_URL = f"{REPO_URL}/releases/latest"
 ISSUES_URL = f"{REPO_URL}/issues/new/choose"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+
+
+INSTALLER_ASSET = re.compile(r"^IDM-Clone-Setup-.*\.exe$", re.IGNORECASE)
+
+
+def pick_installer_asset(assets: list[dict] | None) -> str | None:
+    """browser_download_url of the setup exe in a GitHub release's asset list, if present."""
+    for a in assets or []:
+        name = str(a.get("name") or "")
+        url = str(a.get("browser_download_url") or "")
+        if INSTALLER_ASSET.match(name) and url:
+            return url
+    return None
+
+
+def is_installed_build() -> bool:
+    """True for the exe the installer placed under %LOCALAPPDATA%\\Programs (portable/dev: False)."""
+    if not getattr(sys, "frozen", False):
+        return False
+    local = os.environ.get("LOCALAPPDATA", "")
+    if not local:
+        return False
+    try:
+        Path(sys.executable).resolve().relative_to(Path(local).resolve() / "Programs" / "IDM Clone")
+        return True
+    except ValueError:
+        return False
+
+
+def installer_command(setup_exe: Path | str) -> list[str]:
+    """Silent Inno Setup upgrade that closes the running app and starts it again afterwards."""
+    return [str(setup_exe), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/NORESTART"]
 
 
 def _vtuple(v: str) -> tuple[int, ...]:
@@ -91,7 +124,7 @@ class AboutDialog(QDialog):
 class UpdateChecker(QObject):
     """Asks the GitHub releases API for the newest tag. Emits on the GUI thread."""
 
-    result = Signal(object, object)  # (latest version str | None, error str | None)
+    result = Signal(object, object, object)  # (latest version | None, error | None, installer url | None)
 
     def __init__(self, manager: DownloadManager, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -104,14 +137,21 @@ class UpdateChecker(QObject):
             try:
                 data = json.loads(f.result().decode("utf-8"))
                 tag = str(data.get("tag_name") or "").lstrip("v")
-                self.result.emit(tag or None, None if tag else "no release found")
+                installer = pick_installer_asset(data.get("assets"))
+                self.result.emit(tag or None, None if tag else "no release found", installer)
             except Exception as exc:  # noqa: BLE001
-                self.result.emit(None, f"{type(exc).__name__}: {exc}")
+                self.result.emit(None, f"{type(exc).__name__}: {exc}", None)
 
         fut.add_done_callback(done)
 
     @staticmethod
-    def show_result(parent: QWidget, latest: str | None, error: str | None, silent_if_current: bool = False) -> None:
+    def show_result(
+        parent: QWidget,
+        latest: str | None,
+        error: str | None,
+        silent_if_current: bool = False,
+        installer_url: str | None = None,
+    ) -> None:
         if error or not latest:
             if not silent_if_current:
                 QMessageBox.warning(parent, "Check for updates", f"Could not check for updates.\n{error or ''}")
@@ -120,10 +160,22 @@ class UpdateChecker(QObject):
             box = QMessageBox(parent)
             box.setWindowTitle("Update available")
             box.setText(f"IDM Clone {latest} is available (you have {__version__}).")
-            box.setInformativeText("Open the download page?")
-            box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if box.exec() == QMessageBox.StandardButton.Yes:
-                webbrowser.open(RELEASES_URL)
+            can_install = bool(installer_url) and is_installed_build() and hasattr(parent, "begin_app_update")
+            if can_install:
+                box.setInformativeText(
+                    "Install it now? The update downloads in the background, then the app closes, "
+                    "updates itself and reopens. Running downloads are paused and resume afterwards."
+                )
+                install = box.addButton("Install now", QMessageBox.ButtonRole.AcceptRole)
+                box.addButton("Later", QMessageBox.ButtonRole.RejectRole)
+                box.exec()
+                if box.clickedButton() is install:
+                    parent.begin_app_update(installer_url, latest)  # type: ignore[attr-defined]
+            else:
+                box.setInformativeText("Open the download page?")
+                box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                if box.exec() == QMessageBox.StandardButton.Yes:
+                    webbrowser.open(RELEASES_URL)
         elif not silent_if_current:
             QMessageBox.information(parent, "Check for updates", f"You are up to date (IDM Clone {__version__}).")
 

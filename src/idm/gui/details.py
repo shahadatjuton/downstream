@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections import deque
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal, SignalInstance
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent, QPen
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
@@ -219,11 +219,13 @@ class DetailsPane(QFrame):
         grid.setColumnStretch(1, 1)
         self.setFixedHeight(self.sizeHint().height() + 8)
 
-    def _button(self, icon_name: str, text: str, signal: Signal, tip: str) -> QPushButton:
+    def _button(self, icon_name: str, text: str, signal: SignalInstance, tip: str) -> QPushButton:
         b = QPushButton(icon(icon_name, self.theme.text, 16), text)
         b.setObjectName("detailsButton")
         b.setAutoDefault(False)
         b.setToolTip(tip)
+        b.setAccessibleName(text)
+        b.setAccessibleDescription(tip)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         b.clicked.connect(signal.emit)
         return b
@@ -289,6 +291,8 @@ class DetailsPane(QFrame):
             parts.append("waiting in queue")
         if t.speed_limit:
             parts.append(f"limit {fmt_speed(t.speed_limit)}")
+        if t.checksum_result == "ok":
+            parts.append("checksum verified")
         if t.kind == "media" and t.title:
             parts.append(t.title)
         if t.kind == "torrent":

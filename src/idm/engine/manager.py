@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import json
 import logging
 import sys
 import threading
@@ -19,12 +18,13 @@ import aiohttp
 
 from . import schedule as _schedule
 from . import ytdlp_update
-from .download import DownloadTask, DuplicateError, Status, TaskRunner
+from .download import DownloadTask, DuplicateError, Status, TaskRunner, hash_file, parse_checksum
+from .history import HistoryStore, prune_completed
 from .ipc import IpcServer, app_path_file
 from .media import MediaInfo, MediaRunner, extract_media, find_ffmpeg
 from .mega import MegaClient, MegaFile, MegaRunner, b64encode, is_mega_link
 from .probe import AuthRequiredError, ProbeResult, probe
-from .secrets import CredentialStore, basic_auth_header, host_of, protect, unprotect
+from .secrets import CredentialStore, basic_auth_header, host_of
 from .settings import Settings, app_data_dir
 from .torrent import (
     TorrentEngine,
@@ -41,9 +41,6 @@ Runner = TaskRunner | MediaRunner | TorrentRunner
 
 log = logging.getLogger("idm.engine")
 
-# Request headers whose values are protected (DPAPI on Windows) before they reach downloads.json.
-SENSITIVE_HEADERS = ("cookie", "authorization")
-
 EventCallback = Callable[[str, DownloadTask], None]
 IpcCallback = Callable[[dict[str, Any]], dict[str, Any] | None]
 
@@ -54,6 +51,7 @@ class DownloadManager:
     ) -> None:
         self.settings = settings or Settings.load()
         self.state_path = state_path or (app_data_dir() / "downloads.json")
+        self.history = HistoryStore(self.state_path)
         self.tasks: dict[str, DownloadTask] = {}
         self.on_event: EventCallback | None = None  # called on the loop thread
         self.on_ipc: IpcCallback | None = None  # called on the loop thread; GUI decides what to do
@@ -242,6 +240,7 @@ class DownloadManager:
         password: str = "",
         remember_login: bool = True,
         allow_duplicate: bool = True,
+        checksum: str = "",
     ) -> concurrent.futures.Future:
         """Returns a Future[DownloadTask]. With username/password the download authenticates (HTTP
         Basic); remember_login stores them for the host so later downloads from it need nothing.
@@ -252,9 +251,37 @@ class DownloadManager:
             headers.pop("Authorization", None)  # fetched from the store at request time instead
         elif username:
             headers = self._with_auth(url, headers, username, password)
+        parsed = parse_checksum(checksum)  # raises ValueError early, on the caller's thread
+        checksum = f"{parsed[0]}:{parsed[1]}" if parsed else ""
         return self._call(
-            self._add(url, dest_dir, filename, connections, headers, start, probe_result, referrer, allow_duplicate)
+            self._add(
+                url, dest_dir, filename, connections, headers, start, probe_result, referrer, allow_duplicate, checksum
+            )
         )
+
+    def verify_task(self, task_id: str, checksum: str) -> concurrent.futures.Future:
+        """Hash a finished download against `checksum` (any supported digest). Returns Future[bool],
+        records the result on the task and emits 'verified'. ValueError for a malformed checksum."""
+        parsed = parse_checksum(checksum)
+        if parsed is None:
+            raise ValueError("no checksum given")
+        return self._call(self._verify_task(task_id, *parsed))
+
+    async def _verify_task(self, task_id: str, algo: str, expected: str) -> bool:
+        task = self.tasks.get(task_id)
+        if task is None:
+            raise KeyError(task_id)
+        if task.status != Status.COMPLETED or not task.final_path.is_file():
+            raise ValueError("the download is not finished")
+        loop = asyncio.get_running_loop()
+        got = await loop.run_in_executor(None, hash_file, task.final_path, algo)
+        task.checksum = f"{algo}:{expected}"
+        task.checksum_result = "ok" if got == expected else "mismatch"
+        task.note = "checksum verified" if got == expected else f"checksum mismatch ({algo} {got[:16]}…)"
+        log.info("verify %r: %s", task.filename, task.note)
+        self._save()
+        self._emit("verified", task)
+        return got == expected
 
     def find_duplicate(self, url: str) -> DownloadTask | None:
         """The listed task with this link (original or resolved), if any. Thread-safe."""
@@ -662,6 +689,7 @@ class DownloadManager:
         pr: ProbeResult | None,
         referrer: str,
         allow_duplicate: bool = True,
+        checksum: str = "",
     ) -> DownloadTask:
         if not allow_duplicate:
             existing = self.find_duplicate(url)
@@ -673,6 +701,7 @@ class DownloadManager:
             existing = self.find_duplicate(pr.final_url)
             if existing is not None:
                 raise DuplicateError(existing)
+        headers = _strip_cookies_for_other_host(url, pr.final_url, headers)
         name = filename or pr.filename
         task = DownloadTask(
             url=pr.final_url,
@@ -687,6 +716,7 @@ class DownloadManager:
             status=Status.QUEUED if start else Status.PAUSED,
             referrer=referrer,
             origin=url if url != pr.final_url else "",
+            checksum=checksum,
         )
         return self._register(task)
 
@@ -732,6 +762,7 @@ class DownloadManager:
         )
         self.tasks[task.id] = task
         self._emit("added", task)
+        self._prune()
         self._save()
         self._schedule_soon()
         return task
@@ -944,6 +975,8 @@ class DownloadManager:
                 if task.status == Status.PAUSED:
                     task.status = Status.QUEUED  # stopped by the scheduler, not the user: run again later
             self._emit(task.status.value, task)
+            if task.status == Status.COMPLETED:
+                self._prune()
             self._save()
             self._schedule_soon()
         if task.status == Status.COMPLETED and task.id == getattr(self, "_ffmpeg_task_id", None):
@@ -999,23 +1032,10 @@ class DownloadManager:
                 pass
 
     def _load(self) -> None:
-        try:
-            data = json.loads(self.state_path.read_text("utf-8"))
-        except (OSError, ValueError):
-            return
-        self._interrupted: list[str] = []
-        for item in data.get("tasks", []):
-            try:
-                headers = item.get("headers") or {}
-                if isinstance(headers, dict):
-                    item["headers"] = {k: _unprotect_header(k, v) for k, v in headers.items()}
-                task = DownloadTask.from_dict(item)
-            except (TypeError, ValueError, OSError) as exc:
-                log.warning("skipping unreadable history entry: %s", exc)
-                continue
-            if item.get("status") in (Status.DOWNLOADING.value, Status.QUEUED.value):
-                self._interrupted.append(task.id)  # was running when the app died
+        tasks, self._interrupted = self.history.load()
+        for task in tasks:
             self.tasks[task.id] = task
+        self._prune()
         if self.settings.auto_resume:
             for tid in self._interrupted:
                 t = self.tasks.get(tid)
@@ -1023,27 +1043,23 @@ class DownloadManager:
                     t.status = Status.QUEUED
 
     def _save(self) -> None:
-        data = {"tasks": [_serialize(t) for t in self.tasks.values()]}
-        tmp = self.state_path.with_suffix(".tmp")
-        try:
-            tmp.write_text(json.dumps(data, indent=1), "utf-8")
-            tmp.replace(self.state_path)
-        except OSError as exc:
-            log.warning("could not save download history: %s", exc)
+        self.history.save(self.tasks.values())
+
+    def _prune(self) -> None:
+        """Keep at most settings.history_limit finished entries (oldest go first; files stay)."""
+        removed = prune_completed(self.tasks, self.settings.history_limit)
+        for t in removed:
+            self._emit("removed", t)
+        if removed:
+            log.info("history: dropped %d old finished entries (limit %d)", len(removed), self.settings.history_limit)
 
 
-def _serialize(task: DownloadTask) -> dict[str, Any]:
-    """to_dict() with cookies and Authorization values protected for the current user."""
-    d = task.to_dict()
-    if d.get("headers"):
-        d["headers"] = {
-            k: (protect(v) if k.lower() in SENSITIVE_HEADERS and isinstance(v, str) else v)
-            for k, v in d["headers"].items()
-        }
-    return d
-
-
-def _unprotect_header(name: str, value: Any) -> Any:
-    if name.lower() in SENSITIVE_HEADERS and isinstance(value, str):
-        return unprotect(value)
-    return value
+def _strip_cookies_for_other_host(url: str, final_url: str, headers: dict[str, str] | None) -> dict[str, str] | None:
+    """Browser cookies belong to the page's site. When the link redirects to another host (a CDN,
+    a mirror), sending them there would leak the session, so they are dropped."""
+    if not headers or host_of(url) == host_of(final_url):
+        return headers
+    kept = {k: v for k, v in headers.items() if k.lower() != "cookie"}
+    if len(kept) != len(headers):
+        log.info("dropping cookies: %s redirected to %s", host_of(url), host_of(final_url))
+    return kept

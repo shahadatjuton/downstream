@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..engine import DownloadManager, MediaInfo, MegaFile, ProbeResult, looks_like_torrent_file
+from ..engine import DownloadManager, DownloadTask, MediaInfo, MegaFile, ProbeResult, looks_like_torrent_file
 from ..engine.media import looks_like_media_page, thumbnail_ext
 from ..engine.settings import TORRENT_FOLDER
 from ..engine.torrent import magnet_name
@@ -86,7 +86,7 @@ class AddDownloadDialog(QDialog):
         self.mega_files: list[MegaFile] | None = None
         self.source_kind = ""  # "" | "file" | "media" | "magnet" | "torrent" | "mega"
         self.needs_auth = False  # the server answered 401; show the login row
-        self.duplicate_of = None  # an existing task with the same link (user may still proceed)
+        self.duplicate_of: DownloadTask | None = None  # an existing task with the same link (user may still proceed)
         self._auth_url = ""  # the link the login row belongs to (survives re-probes of the same link)
         self.start_now = True
         self.batch_mode = False
@@ -116,11 +116,13 @@ class AddDownloadDialog(QDialog):
         self.url_edit.textChanged.connect(self._on_url_edited)
         paste = QPushButton(icon("paste", theme.text, 18), "")
         paste.setToolTip("Paste from clipboard")
+        paste.setAccessibleName("Paste link from clipboard")
         paste.setFixedWidth(36)
         paste.setAutoDefault(False)
         paste.clicked.connect(self._paste)
         self.torrent_btn = QPushButton(icon("torrent", theme.text, 18), "")
         self.torrent_btn.setToolTip("Choose a .torrent file from this computer")
+        self.torrent_btn.setAccessibleName("Choose a torrent file")
         self.torrent_btn.setFixedWidth(36)
         self.torrent_btn.setAutoDefault(False)
         self.torrent_btn.clicked.connect(self._browse_torrent)
@@ -233,6 +235,8 @@ class AddDownloadDialog(QDialog):
         self.remember_login = QCheckBox("Remember for this site")
         self.remember_login.setChecked(True)
         self.remember_login.setToolTip("Stored encrypted for your Windows account; manage saved logins in Settings")
+        self.user_edit.setAccessibleName("Username")
+        self.pass_edit.setAccessibleName("Password")
         self.login_btn = QPushButton("Log in")
         self.login_btn.setAutoDefault(False)
         self.login_btn.clicked.connect(self._probe_with_login)
@@ -259,6 +263,15 @@ class AddDownloadDialog(QDialog):
         self.form.addRow("", self.save_thumb)
         self.conn_label = QLabel("Connections")
         self.form.addRow(self.conn_label, self.conn_row)
+        self.checksum_edit = QLineEdit()
+        self.checksum_edit.setPlaceholderText("Optional: MD5, SHA-1 or SHA-256 from the download page")
+        self.checksum_edit.setToolTip(
+            "Paste the digest the site publishes. The file is hashed before it is renamed; a mismatch "
+            "marks the download as failed and keeps the .part file."
+        )
+        self.checksum_edit.textChanged.connect(self._on_checksum_edited)
+        self.checksum_label = QLabel("Checksum")
+        self.form.addRow(self.checksum_label, self.checksum_edit)
         self._show_rows()
 
         # --- Buttons
@@ -303,7 +316,7 @@ class AddDownloadDialog(QDialog):
         torrent = kind in ("magnet", "torrent")
         self.auth_label.setVisible(self.needs_auth)
         self.auth_row.setVisible(self.needs_auth)
-        many_files = kind == "mega" and bool(self.mega_files) and len(self.mega_files) > 1
+        many_files = kind == "mega" and self.mega_files is not None and len(self.mega_files) > 1
         self.quality_label.setVisible(media)
         self.quality_row.setVisible(media)
         show_name = not self.batch_mode and not torrent and not many_files
@@ -312,6 +325,8 @@ class AddDownloadDialog(QDialog):
         plain = kind in ("", "file")
         self.conn_label.setVisible(plain and not self.batch_mode)
         self.conn_row.setVisible(plain and not self.batch_mode)
+        self.checksum_label.setVisible(plain and not self.batch_mode)
+        self.checksum_edit.setVisible(plain and not self.batch_mode)
         fmt = self.quality.currentData() if media else None
         self.save_thumb.setVisible(
             media and bool(self.media_info and self.media_info.thumbnail) and not (fmt and fmt.thumbnail)
@@ -459,10 +474,12 @@ class AddDownloadDialog(QDialog):
             self.needs_auth = True
             self._auth_url = url
             self.card_title.setText("This site asks for a username and password")
-            self.card_sub.setText(
-                "Enter them below and press Log in. "
-                + ("The saved login for this site was refused." if self.user_edit.text() else "")
-            )
+            notes = ["Enter them below and press Log in."]
+            if self.user_edit.text():
+                notes.append("The saved login for this site was refused.")
+            if url.lower().startswith("http://"):
+                notes.append("⚠ This link is not encrypted (http://): the password travels in clear text.")
+            self.card_sub.setText(" ".join(notes))
             self._set_card_icon("warning", self.theme.accent)
             self._show_rows()
             self._set_ready(False)
@@ -688,6 +705,24 @@ class AddDownloadDialog(QDialog):
         self.reject()
 
     # ------------------------------------------------------------- helpers
+    def _on_checksum_edited(self, text: str) -> None:
+        from ..engine.download import parse_checksum
+
+        try:
+            parsed = parse_checksum(text)
+        except ValueError:
+            self.checksum_edit.setStyleSheet("border: 1px solid #d9534f;")
+            self.checksum_edit.setToolTip("Not a valid digest: expected 32, 40, 64 or 128 hex digits")
+            self._set_ready(False)
+            return
+        self.checksum_edit.setStyleSheet("")
+        self.checksum_edit.setToolTip(f"Will verify with {parsed[0].upper()}" if parsed else "")
+        if self.probe_result is not None and self.source_kind == "file":
+            self._set_ready(True)
+
+    def checksum(self) -> str:
+        return self.checksum_edit.text().strip() if self.checksum_edit.isVisibleTo(self) else ""
+
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Choose folder", self.folder_edit.text())
         if folder:
@@ -802,5 +837,6 @@ class AddDownloadDialog(QDialog):
                 password=self.pass_edit.text() if self.needs_auth else "",
                 remember_login=self.remember_login.isChecked(),
                 allow_duplicate=True,  # the card warned and the button said 'Download anyway'
+                checksum=self.checksum(),
             )
         ]

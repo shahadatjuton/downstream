@@ -54,7 +54,9 @@ TikTok and 1000+ site video, audio and thumbnail downloads through yt-dlp, **Bit
 - **Everything else**: EXE, MSI and APK installers, archives, documents and music go through the
   segmented engine and land in their category folders. Sites that ask for a username and
   password (HTTP Basic) get a login row in the add dialog; saved logins are encrypted with
-  Windows DPAPI for your account and reused automatically.
+  Windows DPAPI for your account and reused automatically. Paste the **checksum** a site publishes
+  (MD5, SHA-1, SHA-256 or SHA-512) into the add dialog and the file is verified before it is
+  renamed; right-click a finished download to verify it later.
 - **Organised**: category folders (Video, Documents, Music, …), search, sortable columns
   including a Status column that names the failure ("Error · HTTP 403") and a Description
   column with the page title or site, a warning when a link is already in the list,
@@ -73,7 +75,7 @@ Grab the latest build from the [Releases](https://github.com/shahadatjuton/idm-c
 | File | What it is |
 | --- | --- |
 | `IDM-Clone-Setup-x.y.z.exe` | **Recommended.** Setup wizard: installs per-user (no admin prompt), Start Menu and desktop shortcuts, optional start with Windows, registers the browser host, uninstalls from *Apps & Features*. |
-| `IDM Clone.exe` | Portable single file. No install, keeps settings in `%APPDATA%\idm-clone`. |
+| `IDM Clone.exe` | Portable single file. No install. Put an empty `portable.txt` next to it and everything (settings, history, logs, ffmpeg, yt-dlp) lives in a `data` folder beside it; otherwise `%APPDATA%\idm-clone` is used. |
 | `idm-clone-extension.zip` | The browser extension, if you did not use the installer. |
 
 Requires Windows 10 or 11 (64-bit). Nothing else to install; ffmpeg can be added later from
@@ -184,7 +186,11 @@ idm-clone "https://mega.nz/file/...#..."
 idm-clone D:\Downloads\ubuntu.torrent
 ```
 
-Settings and history live in `%APPDATA%\idm-clone`.
+Settings and history live in `%APPDATA%\idm-clone`, or in `data` next to the exe when a `portable.txt`
+marker is present; the `IDM_CLONE_DATA_DIR` environment variable overrides both. The list keeps the
+500 most recent finished downloads by default (Settings › General); files are never touched.
+When a newer release exists, the installed build offers **Install now**: the setup downloads in the
+background, the app closes, updates itself and reopens.
 
 ## How it works
 
@@ -205,13 +211,17 @@ scripts/          build, install, and browser registration scripts
 tests/            pytest suite (engine, GUI, browser integration)
 ```
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Contributing
 
 Issues and pull requests are welcome. Dev setup:
 
 ```powershell
 .venv\Scripts\pip install -e .[dev]
-.venv\Scripts\python -m pytest      # 54 tests, run headless, isolated from your app data
+.venv\Scripts\python -m pytest      # headless, isolated from your app data, parallel (-n 0 for serial)
 .venv\Scripts
 uff check . ; .venv\Scripts
 uff format .

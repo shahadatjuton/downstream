@@ -38,6 +38,18 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path extension/* -DestinationPath release/idm-clone-extension.zip
 
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $v = python -c "import idm; print(idm.__version__)"
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^## \[$([regex]::Escape($v))\]" | Select-Object -First 1).LineNumber
+          if (-not $start) { throw "CHANGELOG.md has no section for $v" }
+          $rest = $lines[$start..($lines.Count - 1)]
+          $end = ($rest | Select-String -Pattern '^## \[' | Select-Object -First 1).LineNumber
+          $body = if ($end) { $rest[0..($end - 2)] } else { $rest }
+          $body | Set-Content -Path release/notes.md -Encoding utf8
+
       - name: Smoke test the portable exe
         shell: pwsh
         run: |
@@ -54,6 +66,8 @@ jobs:
           $exe = "$env:LOCALAPPDATA\Programs\IDM Clone\IDM Clone.exe"
           if (-not (Test-Path $exe)) { throw "installer did not place the app at $exe" }
           if (-not (Test-Path "$env:LOCALAPPDATA\Programs\IDM Clone\host\com.idmclone.host.json")) { throw "host manifest missing" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Programs\IDM Clone\host\com.idmclone.host.firefox.json")) { throw "Firefox host manifest missing" }
+          if (-not (Test-Path "HKCU:\Software\Mozilla\NativeMessagingHosts\com.idmclone.host")) { throw "Firefox registry key missing" }
           Get-Process | Where-Object { $_.ProcessName -like "IDM Clone*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Start-Process -FilePath "$env:LOCALAPPDATA\Programs\IDM Clone\unins000.exe" -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES" -Wait
 
@@ -65,4 +79,5 @@ jobs:
             release/IDM Clone.exe
             release/idm-host.exe
             release/idm-clone-extension.zip
+          body_path: release/notes.md
           generate_release_notes: true

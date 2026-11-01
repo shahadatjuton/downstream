@@ -52,6 +52,28 @@ def test_sensitive_headers_are_protected_on_disk_and_restored(server, tmp_path: 
         m2.stop()
 
 
+def test_cookies_are_dropped_when_the_link_redirects_to_another_host(server, tmp_path: Path):
+    m = DownloadManager(
+        Settings(download_dir=str(tmp_path / "dl"), use_categories=False), state_path=tmp_path / "s.json"
+    )
+    m.start()
+    try:
+        headers = {"Cookie": "session=topsecret", "Referer": "https://example.com/page"}
+        task = m.add(server.url("/redirect-host"), headers=headers, filename="moved.bin").result(10)
+        assert "Cookie" not in task.headers
+        assert task.headers["Referer"] == headers["Referer"]
+        assert task.url.startswith("http://localhost:")
+        assert m.wait(task.id, 60).status == Status.COMPLETED
+        file_requests = [r for r in server.requests if "Range" in r and r.get("Host", "").startswith("localhost")]
+        assert file_requests and all("Cookie" not in r for r in file_requests)
+
+        # Same host after the redirect: cookies stay.
+        same = m.add(server.url("/file"), headers=headers, start=False, filename="same.bin").result(10)
+        assert same.headers["Cookie"] == headers["Cookie"]
+    finally:
+        m.stop()
+
+
 def test_engine_logs_lifecycle(server, tmp_path: Path, caplog):
     caplog.set_level(logging.INFO, logger="idm.engine")
     m = DownloadManager(

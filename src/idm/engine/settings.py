@@ -4,13 +4,39 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
-def app_data_dir() -> Path:
+def install_root() -> Path:
+    """Folder of the running exe, or the source checkout when running from source."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[3]
+
+
+def portable_root() -> Path | None:
+    """The install root when a `portable.txt` marker sits next to the exe, else None."""
+    root = install_root()
+    return root if (root / "portable.txt").is_file() else None
+
+
+def resolve_app_data_dir() -> Path:
+    """Where settings, history, logs and tools live. Precedence: IDM_CLONE_DATA_DIR environment
+    variable, then `<exe folder>/data` in portable mode, then %APPDATA%\\idm-clone."""
+    override = os.environ.get("IDM_CLONE_DATA_DIR")
+    if override:
+        return Path(override)
+    root = portable_root()
+    if root is not None:
+        return root / "data"
     base = os.environ.get("APPDATA") or os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
-    path = Path(base) / "idm-clone"
+    return Path(base) / "idm-clone"
+
+
+def app_data_dir() -> Path:
+    path = resolve_app_data_dir()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -59,6 +85,7 @@ class Settings:
     browser_integration: bool = True  # listen for the browser extension
     show_complete_dialog: bool = True  # IDM-style popup when a download finishes
     auto_resume: bool = True  # continue downloads that were interrupted by a crash/shutdown
+    history_limit: int = 500  # finished downloads kept in the list (oldest dropped first); 0 = all
     theme: str = "auto"  # auto | light | dark
     preferred_height: int = 0  # last chosen video quality (0 = best offered)
     start_with_windows: bool = False  # HKCU Run key (set by the app or the installer)

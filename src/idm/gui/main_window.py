@@ -3,11 +3,13 @@ actions, setup card, tray, clipboard, drag-and-drop, queue control, and 'when do
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
 import webbrowser
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QTimer, Signal
@@ -57,7 +59,7 @@ from ..engine import DownloadManager, DownloadTask, Status
 from .add_dialog import AddDownloadDialog
 from .complete_dialog import DownloadCompleteDialog
 from .details import DetailsPane
-from .dialogs import ISSUES_URL, REPO_URL, AboutDialog, BrowserSetupDialog, UpdateChecker
+from .dialogs import ISSUES_URL, REPO_URL, AboutDialog, BrowserSetupDialog, UpdateChecker, installer_command
 from .icons import CATEGORY_ICONS, icon
 from .models import (
     COL_ADDED,
@@ -154,8 +156,11 @@ def host_registered() -> bool:
     return False
 
 
+log = logging.getLogger("idm.gui")
+
+
 class _EventBridge(QObject):
-    event = Signal(str, object)
+    engine_event = Signal(str, object)
     ipc = Signal(object)
 
 
@@ -254,9 +259,9 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self._bridge = _EventBridge(self)
-        self._bridge.event.connect(self._on_engine_event)
+        self._bridge.engine_event.connect(self._on_engine_event)
         self._bridge.ipc.connect(self._on_ipc)
-        manager.on_event = lambda name, task: self._bridge.event.emit(name, task)
+        manager.on_event = lambda name, task: self._bridge.engine_event.emit(name, task)
         manager.on_ipc = self._ipc_from_engine
 
         self._complete_dialogs: list[DownloadCompleteDialog] = []
@@ -360,8 +365,40 @@ class MainWindow(QMainWindow):
         self._silent_update_check = silent
         self._updates.check()
 
-    def _on_update_result(self, latest, error) -> None:
-        UpdateChecker.show_result(self, latest, error, silent_if_current=self._silent_update_check)
+    def _on_update_result(self, latest, error, installer_url=None) -> None:
+        UpdateChecker.show_result(
+            self, latest, error, silent_if_current=self._silent_update_check, installer_url=installer_url
+        )
+
+    def begin_app_update(self, installer_url: str, version: str) -> None:
+        """Download the setup exe through the normal queue; _on_download_complete runs it and quits."""
+        from ..engine.settings import app_data_dir
+
+        dest = app_data_dir() / "updates"
+        fut = self.manager.add(
+            installer_url, dest_dir=str(dest), filename=f"IDM-Clone-Setup-{version}.exe", allow_duplicate=True
+        )
+
+        def done(f) -> None:
+            try:
+                self._update_task_id = f.result().id
+            except Exception as exc:  # noqa: BLE001
+                self._bridge.engine_event.emit(
+                    "add-failed", DownloadTask(url=installer_url, filename="", dest_dir="", error=str(exc))
+                )
+
+        fut.add_done_callback(done)
+        self.statusBar().showMessage(f"Downloading IDM Clone {version}… it installs itself when finished.", 10000)
+
+    def _launch_update(self, task: DownloadTask) -> None:
+        cmd = installer_command(task.final_path)
+        log.info("starting installer: %s", cmd)
+        try:
+            subprocess.Popen(cmd, close_fds=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Update", f"Could not start the installer:\n{exc}\n\n{task.final_path}")
+            return
+        self._quit()
 
     def _open_logs(self) -> None:
         from ..engine.settings import app_data_dir
@@ -661,7 +698,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- theming
     def set_theme_mode(self, mode: str) -> None:
         """Re-skin everything live (Settings › Appearance)."""
-        self.theme = apply_theme(QApplication.instance(), mode)
+        inst = QApplication.instance()
+        assert isinstance(inst, QApplication)
+        self.theme = apply_theme(inst, mode)
         self.model.theme = self.theme
         self.progress_delegate.theme = self.theme
         self.sidebar_delegate.theme = self.theme
@@ -762,6 +801,12 @@ class MainWindow(QMainWindow):
         self.details.setVisible(checked)
 
     def _on_engine_event(self, name: str, task: DownloadTask) -> None:
+        if name == "verified":
+            if task.checksum_result == "ok":
+                QMessageBox.information(self, "Verify checksum", f"{task.filename}\n\nChecksum matches.")
+            else:
+                QMessageBox.warning(self, "Verify checksum", f"{task.filename}\n\n{task.note}")
+            return
         if name == "ytdlp-updated":
             self.statusBar().showMessage(f"yt-dlp updated to {task.filename}: newest site support is active", 10000)
             return
@@ -835,6 +880,9 @@ class MainWindow(QMainWindow):
     def _on_download_complete(self, task: DownloadTask) -> None:
         if task.id == getattr(self.manager, "_ffmpeg_task_id", None):
             return  # internal helper download, handled by the ffmpeg flow
+        if task.id == getattr(self, "_update_task_id", None):
+            self._launch_update(task)
+            return
         self._last_completed = task
         self._completed_since_idle = True
         if self.tray and self.tray.supportsMessages():
@@ -1005,7 +1053,7 @@ class MainWindow(QMainWindow):
             try:
                 f.result()  # selection happens via the "added" engine event on the GUI thread
             except Exception as exc:  # noqa: BLE001
-                self._bridge.event.emit(
+                self._bridge.engine_event.emit(
                     "add-failed", DownloadTask(url=dlg.url(), filename="", dest_dir="", error=str(exc))
                 )
 
@@ -1135,6 +1183,8 @@ class MainWindow(QMainWindow):
             menu.addAction(self._icon("paste"), "Copy link", self.copy_link_selected)
             if t.kind == "media" and t.thumbnail:
                 menu.addAction(self._icon("image"), "Save thumbnail image", self.save_thumbnail_selected)
+            if done and t.kind in ("file", "mega"):
+                menu.addAction("Verify checksum…", self.verify_checksum_selected)
             menu.addSeparator()
             menu.addAction(self._icon("play"), "Resume", self.resume_selected).setEnabled(self.act_resume.isEnabled())
             menu.addAction(self._icon("pause"), "Pause", self.pause_selected).setEnabled(self.act_pause.isEnabled())
@@ -1165,16 +1215,35 @@ class MainWindow(QMainWindow):
         speed = menu.addMenu("Speed limit")
         current_kb = t.speed_limit // 1024
         for label, kb in self.SPEED_PRESETS:
-            a = speed.addAction(label, lambda kb=kb: self.set_limit_selected(kb * 1024))
+            a = speed.addAction(label, partial(self.set_limit_selected, kb * 1024))
             a.setCheckable(True)
             a.setChecked(current_kb == kb)
         speed.addAction("Custom…", self._custom_limit_selected)
         if t.kind in ("file", "mega"):
             conns = menu.addMenu("Connections")
             for n in self.CONNECTION_PRESETS:
-                a = conns.addAction(str(n), lambda n=n: self.set_connections_selected(n))
+                a = conns.addAction(str(n), partial(self.set_connections_selected, n))
                 a.setCheckable(True)
                 a.setChecked(t.connections == n)
+
+    def verify_checksum_selected(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        sel = [t for t in self.selected_tasks() if t.status == Status.COMPLETED]
+        if not sel:
+            return
+        t = sel[0]
+        text, ok = QInputDialog.getText(
+            self, "Verify checksum", f"Expected MD5 / SHA-1 / SHA-256 for {t.filename}:", text=t.checksum.split(":")[-1]
+        )
+        if not ok or not text.strip():
+            return
+        try:
+            self.manager.verify_task(t.id, text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Verify checksum", str(exc))
+            return
+        self.statusBar().showMessage(f"Hashing {t.filename}…", 5000)
 
     def set_limit_selected(self, bytes_per_sec: int) -> None:
         for t in self.selected_tasks():

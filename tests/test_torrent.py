@@ -11,6 +11,10 @@ import pytest
 from idm.engine import DownloadManager, Settings, Status, is_magnet, looks_like_torrent_file
 from idm.engine.torrent import describe_torrent_file, magnet_name
 
+# libtorrent sessions pick free ports; two test processes doing that at once can collide, so every
+# torrent test runs on the same xdist worker (--dist loadgroup in pyproject).
+pytestmark = pytest.mark.xdist_group("torrent")
+
 lt = pytest.importorskip("libtorrent")
 
 PAYLOAD = os.urandom(3 * 1024 * 1024 + 999)
@@ -46,8 +50,21 @@ class Seeder:
         lt.set_piece_hashes(ct, str(self.dir))
         self.torrent_bytes = lt.bencode(ct.generate())
         self.info = lt.torrent_info(lt.bdecode(self.torrent_bytes))
-        self.session = _quiet_session()
-        self.port = self.session.listen_port()
+        # libtorrent binds asynchronously, so listen_port() is 0 for a moment; and the free port we
+        # picked can be grabbed by another test process in between, in which case the bind fails and
+        # the port stays 0. Retry with a fresh port when that happens.
+        for _attempt in range(5):
+            self.session = _quiet_session()
+            deadline = time.monotonic() + 3
+            while (port := self.session.listen_port()) == 0 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if port:
+                break
+            self.session.pause()
+            del self.session
+        else:
+            raise RuntimeError("seeder session never opened its listen socket")
+        self.port = port
         params = lt.add_torrent_params()
         params.ti = self.info
         params.save_path = str(self.dir)
@@ -56,8 +73,8 @@ class Seeder:
         deadline = time.monotonic() + 10
         while not self.handle.status().is_seeding and time.monotonic() < deadline:
             time.sleep(0.1)
-        # The listen socket opens a moment after the session exists; a connection attempt that
-        # arrives before that hangs until libtorrent's 15 s connect timeout.
+        # listen_port() reports the TCP socket; the uTP (UDP) socket on the same number opens a moment
+        # later, and the downloader tries uTP first. Connecting before it is up costs a 15 s timeout.
         time.sleep(1.0)
 
     @property

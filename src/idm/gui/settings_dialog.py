@@ -77,6 +77,25 @@ class SettingsDialog(QDialog):
         self.auto_resume.setChecked(settings.auto_resume)
         form.addRow("", self.auto_resume)
 
+        self.history_limit = QSpinBox()
+        self.history_limit.setRange(0, 100_000)
+        self.history_limit.setSpecialValueText("Keep all")
+        self.history_limit.setSuffix(" most recent")
+        self.history_limit.setValue(settings.history_limit)
+        self.history_limit.setToolTip("Older finished downloads leave the list automatically; the files stay")
+        form.addRow("Finished downloads kept:", self.history_limit)
+
+        from ..engine.settings import app_data_dir, portable_root
+
+        data_note = QLabel(
+            f"Data folder: {app_data_dir()}"
+            + ("  ·  portable mode (portable.txt found next to the app)" if portable_root() else "")
+        )
+        data_note.setObjectName("muted")
+        data_note.setWordWrap(True)
+        data_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        form.addRow("", data_note)
+
         from . import winstartup
 
         self.start_with_windows = QCheckBox("Start IDM Clone when I sign in to Windows")
@@ -392,6 +411,7 @@ class SettingsDialog(QDialog):
             browser_integration=self.browser_integration.isChecked(),
             show_complete_dialog=self.show_complete.isChecked(),
             auto_resume=self.auto_resume.isChecked(),
+            history_limit=self.history_limit.value(),
             theme=self.theme_box.currentData() or "auto",
             start_with_windows=self.start_with_windows.isChecked(),
             start_minimized=self.start_minimized.isChecked(),
