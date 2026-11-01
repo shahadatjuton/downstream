@@ -15,7 +15,7 @@ from idm.gui.add_dialog import AddDownloadDialog
 from idm.gui.main_window import MainWindow
 from idm.gui.models import TaskFilter
 from idm.gui.theme import apply_theme
-from tests.test_engine import DIGEST, TestServer
+from tests.test_engine import DIGEST, LocalServer
 from tests.test_gui import pump, select_filter, sidebar_counts, visible_names, wait_until
 from tests.test_mega import FILE_LINK, FILE_SIZE, PLAIN, FakeMega
 from tests.test_torrent import PAYLOAD, Seeder
@@ -30,7 +30,7 @@ def app():
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 
@@ -178,7 +178,7 @@ def test_bad_mega_link_reports_error(app, window, fake_mega, monkeypatch):
 
 
 # ----------------------------------------------------------------------- thumbnails
-def _fake_media(server: TestServer):
+def _fake_media(server: LocalServer):
     def extract(url, headers=None, proxy=None, ffmpeg=None):
         return MediaInfo(
             url=server.url("/file"),

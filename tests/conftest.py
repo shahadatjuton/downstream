@@ -19,4 +19,8 @@ def isolated_app_data(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ipc_mod, "app_data_dir", lambda: data)
     monkeypatch.setattr(media_mod, "managed_ffmpeg_dir", lambda: data / "ffmpeg")
     monkeypatch.setenv("APPDATA", str(data.parent))
+    # Never let a test reach GitHub for a yt-dlp update.
+    from idm.engine.manager import DownloadManager
+
+    monkeypatch.setattr(DownloadManager, "ytdlp_check_delay", None, raising=False)
     return data

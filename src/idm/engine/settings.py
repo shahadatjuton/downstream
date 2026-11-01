@@ -55,6 +55,7 @@ class Settings:
     watch_clipboard: bool = True
     proxy: str = ""  # e.g. http://127.0.0.1:8080
     ffmpeg_path: str = ""  # optional; enables merged high-quality video formats
+    ytdlp_auto_update: bool = True  # fetch the newest yt-dlp release into app data at startup
     browser_integration: bool = True  # listen for the browser extension
     show_complete_dialog: bool = True  # IDM-style popup when a download finishes
     auto_resume: bool = True  # continue downloads that were interrupted by a crash/shutdown

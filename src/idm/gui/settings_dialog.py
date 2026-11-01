@@ -207,6 +207,27 @@ class SettingsDialog(QDialog):
             )
             get_btn.clicked.connect(self._download_ffmpeg)
             form.addRow("", get_btn)
+
+        from ..engine.ytdlp_update import current_version
+
+        ver, managed = current_version()
+        self.ytdlp_label = QLabel(
+            f"yt-dlp {ver or 'unknown'} ({'downloaded update' if managed else 'bundled with the app'})"
+        )
+        self.ytdlp_label.setObjectName("muted")
+        form.addRow("Site support:", self.ytdlp_label)
+        self.ytdlp_auto = QCheckBox("Keep yt-dlp up to date automatically (checked once at startup)")
+        self.ytdlp_auto.setChecked(settings.ytdlp_auto_update)
+        self.ytdlp_auto.setToolTip(
+            "Video sites change often; yt-dlp fixes follow within days. The newest release is fetched "
+            "into the app data folder and used instead of the copy built into the app."
+        )
+        form.addRow("", self.ytdlp_auto)
+        self.ytdlp_btn = QPushButton("Update yt-dlp now")
+        self.ytdlp_btn.setAutoDefault(False)
+        self.ytdlp_btn.setEnabled(manager is not None)
+        self.ytdlp_btn.clicked.connect(self._update_ytdlp)
+        form.addRow("", self.ytdlp_btn)
         tabs.addTab(video, "Video")
 
         # --- Torrents
@@ -273,7 +294,9 @@ class SettingsDialog(QDialog):
             "1. The installer registers the native host for Chrome, Edge and Brave (or run <code>scripts/register-browser.ps1</code> from source).<br>"
             "2. Open <code>chrome://extensions</code>, enable Developer mode, click <i>Load unpacked</i> and pick:<br>"
             f"&nbsp;&nbsp;&nbsp;<code>{ext_dir}</code><br>"
-            "3. Click the extension icon on any page to grab its videos, or download a file as usual: it is caught here."
+            "3. Click the extension icon on any page to grab its videos, or download a file as usual: it is caught here.<br>"
+            "<b>Firefox</b>: <code>about:debugging</code> → <i>This Firefox</i> → <i>Load Temporary Add-on</i> → "
+            "<code>manifest.json</code> in that folder; then allow <i>Access your data for all websites</i>."
         )
         steps.setWordWrap(True)
         steps.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -318,6 +341,13 @@ class SettingsDialog(QDialog):
         self._manager.install_ffmpeg()
         self.accept()
 
+    def _update_ytdlp(self) -> None:
+        if self._manager is None:
+            return
+        self.ytdlp_btn.setEnabled(False)
+        self.ytdlp_label.setText("Downloading the newest yt-dlp… the result appears in the status bar.")
+        self._manager.update_ytdlp(force=True)
+
     def _browse_ffmpeg(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Locate ffmpeg.exe", "", "ffmpeg (ffmpeg.exe ffmpeg);;All files (*)"
@@ -358,6 +388,7 @@ class SettingsDialog(QDialog):
             user_agent=self.user_agent.text().strip() or self._original.user_agent,
             categories=self._parse_categories() or self._original.categories,
             ffmpeg_path=self.ffmpeg.text().strip(),
+            ytdlp_auto_update=self.ytdlp_auto.isChecked(),
             browser_integration=self.browser_integration.isChecked(),
             show_complete_dialog=self.show_complete.isChecked(),
             auto_resume=self.auto_resume.isChecked(),

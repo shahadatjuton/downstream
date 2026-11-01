@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import aiohttp
+
+log = logging.getLogger("idm.download")
 
 CHUNK_SIZE = 64 * 1024
 MIN_SPLIT = 1024 * 1024  # a segment is only split if both halves would be >= this
@@ -365,8 +368,18 @@ class TaskRunner:
                         attempt += 1
                         if attempt > self.max_retries or not task.resumable:
                             self._error = f"{type(exc).__name__}: {exc}"
+                            log.warning("%r: giving up on bytes %d-%s: %s", task.filename, seg.start, seg.end, exc)
                             self._stop.set()
                             break
+                        log.info(
+                            "%r: bytes %d-%s failed (%s), retry %d/%d",
+                            task.filename,
+                            seg.position,
+                            seg.end,
+                            exc,
+                            attempt,
+                            self.max_retries,
+                        )
                         await asyncio.sleep(min(30, 2**attempt))
                 self._claimed.discard(id(seg))
 

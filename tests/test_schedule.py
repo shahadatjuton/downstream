@@ -11,12 +11,12 @@ import pytest
 from idm.engine import DownloadManager, Settings, Status
 from idm.engine import schedule as sched
 
-from .test_engine import DIGEST, TestServer, sha256_of
+from .test_engine import DIGEST, LocalServer, sha256_of
 
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 
@@ -68,7 +68,7 @@ def test_next_change_and_describe():
     assert sched.describe(s, night) == "stops at Tue 07:00"
 
 
-def test_manager_holds_queue_until_window_opens(server: TestServer, tmp_path: Path):
+def test_manager_holds_queue_until_window_opens(server: LocalServer, tmp_path: Path):
     settings = Settings(
         download_dir=str(tmp_path / "dl"),
         use_categories=False,
@@ -95,7 +95,7 @@ def test_manager_holds_queue_until_window_opens(server: TestServer, tmp_path: Pa
         m.stop()
 
 
-def test_manager_pauses_running_download_when_window_closes_and_requeues(server: TestServer, tmp_path: Path):
+def test_manager_pauses_running_download_when_window_closes_and_requeues(server: LocalServer, tmp_path: Path):
     settings = Settings(download_dir=str(tmp_path / "dl"), use_categories=False, connections_per_download=2)
     fake = [datetime(2026, 11, 2, 23, 30).timestamp()]
     m = DownloadManager(settings, state_path=tmp_path / "state.json")

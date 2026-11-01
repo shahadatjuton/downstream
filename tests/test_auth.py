@@ -17,12 +17,12 @@ from idm.engine import AuthRequiredError, DownloadManager, Settings, Status
 from idm.engine import secrets as secrets_mod
 from idm.engine.secrets import CredentialStore
 
-from .test_engine import DIGEST, TestServer, sha256_of
+from .test_engine import DIGEST, LocalServer, sha256_of
 
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

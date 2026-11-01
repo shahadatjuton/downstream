@@ -9,6 +9,7 @@
 #define AppName "IDM Clone"
 #define AppExe "IDM Clone.exe"
 #define HostName "com.idmclone.host"
+#define GeckoId "idm-clone@shahadatjuton.github.io"
 #define SourceDir "..\dist\IDM Clone"
 
 [Setup]
@@ -46,7 +47,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
 Name: "startup"; Description: "Start {#AppName} when I sign in to Windows (minimised to the tray)"; GroupDescription: "Startup:"; Flags: unchecked
-Name: "browser"; Description: "Register the browser extension host for Chrome, Edge and Brave"; GroupDescription: "Browser integration:"
+Name: "browser"; Description: "Register the browser extension host for Chrome, Edge, Brave and Firefox"; GroupDescription: "Browser integration:"
 Name: "magnet"; Description: "Open magnet links and .torrent files with {#AppName}"; GroupDescription: "Torrents:"
 
 [Files]
@@ -69,6 +70,7 @@ Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\{#HostName}"; V
 Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
 Root: HKCU; Subkey: "Software\Chromium\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
 Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
+Root: HKCU; Subkey: "Software\Mozilla\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.firefox.json"; Flags: uninsdeletekey; Tasks: browser
 ; magnet: protocol and .torrent file association (per user)
 Root: HKCU; Subkey: "Software\Classes\magnet"; ValueType: string; ValueData: "URL:Magnet link"; Flags: uninsdeletekey; Tasks: magnet
 Root: HKCU; Subkey: "Software\Classes\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: magnet
@@ -123,6 +125,16 @@ begin
     '  "allowed_origins": ["chrome-extension://' + ExtensionId() + '/"]' + #13#10 +
     '}' + #13#10;
   SaveStringToFile(ExpandConstant('{app}\host\{#HostName}.json'), Manifest, False);
+  // Firefox identifies the extension by its gecko id instead of an origin.
+  Manifest :=
+    '{' + #13#10 +
+    '  "name": "{#HostName}",' + #13#10 +
+    '  "description": "IDM Clone native messaging host",' + #13#10 +
+    '  "path": "' + HostExe + '",' + #13#10 +
+    '  "type": "stdio",' + #13#10 +
+    '  "allowed_extensions": ["{#GeckoId}"]' + #13#10 +
+    '}' + #13#10;
+  SaveStringToFile(ExpandConstant('{app}\host\{#HostName}.firefox.json'), Manifest, False);
 end;
 
 procedure WriteAppPath();

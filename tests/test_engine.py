@@ -34,12 +34,14 @@ def _parse_range(value: str, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
-class TestServer:
+class LocalServer:
     """Serves PAYLOAD at /file (Range-aware) and /norange (ignores Range), with an optional delay."""
 
     def __init__(self) -> None:
         self.delay = 0.0
         self.requests: list[dict[str, str]] = []
+        self.ytdlp_tag = "2099.1.1"  # /ytdlp/latest redirects to .../tag/<this>
+        self.ytdlp_zip = b""  # bytes served by /ytdlp/dl
         self.port = 0
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -87,6 +89,12 @@ class TestServer:
             return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Members"'})
         return await self._file(request)
 
+    async def _ytdlp_latest(self, request: web.Request) -> web.Response:
+        raise web.HTTPFound(f"https://github.com/yt-dlp/yt-dlp/releases/tag/{self.ytdlp_tag}")
+
+    async def _ytdlp_dl(self, request: web.Request) -> web.Response:
+        return web.Response(body=self.ytdlp_zip, content_type="application/zip")
+
     async def _norange(self, request: web.Request) -> web.StreamResponse:
         self.requests.append(dict(request.headers))
         resp = web.StreamResponse(status=200, headers={"Content-Length": str(FILE_SIZE)})
@@ -121,6 +129,8 @@ class TestServer:
         app.router.add_get("/file", self._file)
         app.router.add_get("/norange", self._norange)
         app.router.add_get("/auth", self._auth)
+        app.router.add_get("/ytdlp/latest", self._ytdlp_latest)
+        app.router.add_get("/ytdlp/dl", self._ytdlp_dl)
         app.router.add_get("/chunked", self._chunked)
         app.router.add_get("/page", self._page)
         runner = web.AppRunner(app)
@@ -135,7 +145,7 @@ class TestServer:
             loop.run_until_complete(runner.cleanup())
             loop.close()
 
-    def start(self) -> TestServer:
+    def start(self) -> LocalServer:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
         self._ready.wait()
@@ -153,7 +163,7 @@ class TestServer:
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

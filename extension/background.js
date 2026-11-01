@@ -1,6 +1,8 @@
 // IDM Clone — background service worker (Manifest V3).
 // 1. Intercepts browser downloads and hands them to the desktop app.
 // 2. Watches network responses for video/audio streams and lists them per tab.
+// Runs as a service worker in Chromium browsers and as an event page in Firefox (both are
+// declared in manifest.json); `chrome.*` is available in both.
 // 3. Adds "Download with IDM Clone" context menus.
 
 const HOST = "com.idmclone.host";
@@ -81,9 +83,7 @@ function notify(title, message) {
 // ---------------------------------------------------------------- download interception
 const handled = new Set();
 
-chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-  suggest();
-  (async () => {
+async function interceptDownload(item) {
     const settings = await getSettings();
     if (!settings.intercept) return;
     if (!/^https?:/i.test(item.url) && !/^https?:/i.test(item.finalUrl || "")) return;
@@ -106,8 +106,20 @@ chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
       mime: item.mime,
       size: item.totalBytes > 0 ? item.totalBytes : 0,
     });
-  })();
-});
+}
+
+if (chrome.downloads.onDeterminingFilename) {
+  // Chromium: fires before the file is created, so cancelling leaves nothing behind.
+  chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    suggest();
+    interceptDownload(item);
+  });
+} else {
+  // Firefox has no onDeterminingFilename; onCreated fires as soon as the download starts.
+  chrome.downloads.onCreated.addListener((item) => {
+    interceptDownload(item);
+  });
+}
 
 // ---------------------------------------------------------------- media sniffing
 function headerValue(headers, name) {

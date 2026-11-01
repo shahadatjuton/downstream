@@ -9,12 +9,12 @@ import pytest
 
 from idm.engine import DownloadManager, DownloadTask, Settings, Status
 
-from .test_engine import DIGEST, FILE_SIZE, TestServer, sha256_of
+from .test_engine import DIGEST, FILE_SIZE, LocalServer, sha256_of
 
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

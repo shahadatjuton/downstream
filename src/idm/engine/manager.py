@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
+import logging
 import sys
 import threading
 import time
@@ -17,12 +18,13 @@ from typing import Any
 import aiohttp
 
 from . import schedule as _schedule
+from . import ytdlp_update
 from .download import DownloadTask, DuplicateError, Status, TaskRunner
 from .ipc import IpcServer, app_path_file
 from .media import MediaInfo, MediaRunner, extract_media, find_ffmpeg
 from .mega import MegaClient, MegaFile, MegaRunner, b64encode, is_mega_link
 from .probe import AuthRequiredError, ProbeResult, probe
-from .secrets import CredentialStore, basic_auth_header, host_of
+from .secrets import CredentialStore, basic_auth_header, host_of, protect, unprotect
 from .settings import Settings, app_data_dir
 from .torrent import (
     TorrentEngine,
@@ -36,6 +38,11 @@ from .torrent import (
 )
 
 Runner = TaskRunner | MediaRunner | TorrentRunner
+
+log = logging.getLogger("idm.engine")
+
+# Request headers whose values are protected (DPAPI on Windows) before they reach downloads.json.
+SENSITIVE_HEADERS = ("cookie", "authorization")
 
 EventCallback = Callable[[str, DownloadTask], None]
 IpcCallback = Callable[[dict[str, Any]], dict[str, Any] | None]
@@ -54,6 +61,7 @@ class DownloadManager:
         self.credentials = CredentialStore()  # per-host logins, password DPAPI-protected on disk
         self.clock: Callable[[], float] = time.time  # injectable for scheduler tests
         self.schedule_poll = 15.0  # seconds between scheduler window checks
+        self.ytdlp_check_delay: float | None = 10.0  # seconds after start; None disables the check
 
         self._held: set[str] = set()  # runners paused by the scheduler; go back to QUEUED when they stop
         self._sched_timer: asyncio.TimerHandle | None = None
@@ -73,6 +81,7 @@ class DownloadManager:
     def start(self) -> None:
         if self._thread:
             return
+        ytdlp_update.activate_managed()  # prefer a downloaded yt-dlp over the bundled one
         self._load()
         self._thread = threading.Thread(target=self._thread_main, name="idm-loop", daemon=True)
         self._thread.start()
@@ -105,16 +114,23 @@ class DownloadManager:
             loop.close()
 
     async def _startup(self) -> None:
+        log.info("engine starting: %d task(s) restored, downloads -> %s", len(self.tasks), self.settings.download_dir)
         self._session = self._make_session()
         self._mega = MegaClient(self._session, self.settings.proxy or None)
         if self.enable_ipc:
             self._ipc = IpcServer(self._handle_ipc)
             try:
                 await self._ipc.start()
-            except OSError:
+                log.info("browser IPC listening on port %s", self._ipc.port)
+            except OSError as exc:
+                log.warning("browser IPC could not start: %s", exc)
                 self._ipc = None
         asyncio.get_running_loop().call_soon(self._schedule_soon)
         asyncio.get_running_loop().call_soon(self._schedule_check)
+        if self.settings.ytdlp_auto_update and self.ytdlp_check_delay is not None:
+            asyncio.get_running_loop().call_later(
+                self.ytdlp_check_delay, lambda: asyncio.ensure_future(self._update_ytdlp(False, True, quiet=True))
+            )
 
     def _make_session(self) -> aiohttp.ClientSession:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=60)
@@ -127,6 +143,7 @@ class DownloadManager:
         )
 
     async def _shutdown(self) -> None:
+        log.info("engine stopping (%d active)", len(self._runners))
         for runner in list(self._runners.values()):
             runner.pause()
         for _ in range(50):
@@ -537,6 +554,47 @@ class DownloadManager:
     def ipc_port(self) -> int | None:
         return self._ipc.port if self._ipc else None
 
+    # ------------------------------------------------------------ yt-dlp
+    @staticmethod
+    def ytdlp_version() -> tuple[str, bool]:
+        """(version, from_downloaded_copy) of the yt-dlp currently in use."""
+        return ytdlp_update.current_version()
+
+    def update_ytdlp(self, force: bool = False, activate: bool = True) -> concurrent.futures.Future:
+        """Check GitHub for a newer yt-dlp and download it into app data. Returns Future[str | None]:
+        the new version, or None when already current. Emits 'ytdlp-updated' / 'ytdlp-current' /
+        'ytdlp-failed' (version or error in task.filename / task.error)."""
+        return self._call(self._update_ytdlp(force, activate))
+
+    async def _update_ytdlp(self, force: bool, activate: bool, quiet: bool = False) -> str | None:
+        assert self._session
+        proxy = self.settings.proxy or None
+        stub = DownloadTask(url=ytdlp_update.DOWNLOAD_URL, filename="", dest_dir="")
+        try:
+            current, _managed = ytdlp_update.current_version()
+            latest = await ytdlp_update.fetch_latest_version(self._session, proxy)
+            if not force and not ytdlp_update.is_newer(latest, current):
+                stub.filename = current
+                self._emit("ytdlp-current", stub)
+                return None
+            version = await ytdlp_update.download_latest(self._session, proxy)
+            if activate:
+                loop = asyncio.get_running_loop()
+                activated = await loop.run_in_executor(None, ytdlp_update.activate_managed)
+                if activated is None:
+                    raise ValueError(f"downloaded yt-dlp {version} could not be loaded; keeping the bundled copy")
+            stub.filename = version
+            log.info("yt-dlp updated %s -> %s", current, version)
+            self._emit("ytdlp-updated", stub)
+            return version
+        except Exception as exc:  # noqa: BLE001
+            log.warning("yt-dlp update failed: %s", exc)
+            stub.error = f"{type(exc).__name__}: {exc}"
+            self._emit("ytdlp-failed", stub)
+            if quiet:
+                return None
+            raise
+
     def install_ffmpeg(self) -> concurrent.futures.Future:
         """Download a static ffmpeg build through the normal queue and unpack it into app data.
         Emits 'ffmpeg-ready' or 'ffmpeg-failed' on the event callback. Returns Future[DownloadTask]."""
@@ -665,6 +723,13 @@ class DownloadManager:
         return self._register(task)
 
     def _register(self, task: DownloadTask) -> DownloadTask:
+        log.info(
+            "added %s %r (%s) from %s",
+            task.kind,
+            task.filename,
+            f"{task.size} bytes" if task.size else "size unknown",
+            task.origin or task.url,
+        )
         self.tasks[task.id] = task
         self._emit("added", task)
         self._save()
@@ -861,9 +926,18 @@ class DownloadManager:
     async def _run(self, runner: Runner) -> None:
         task = runner.task
         self._emit("started", task)
+        log.info("start %r: %s, %d connection(s)", task.filename, task.kind, task.connections)
+        t0 = time.monotonic()
         try:
             await runner.run()
         finally:
+            took = time.monotonic() - t0
+            if task.status == Status.ERROR:
+                log.warning("failed %r after %.1fs at %d bytes: %s", task.filename, took, task.downloaded, task.error)
+            elif task.status == Status.COMPLETED:
+                log.info("completed %r: %s bytes in %.1fs -> %s", task.filename, task.size, took, task.final_path)
+            else:
+                log.info("%s %r at %d bytes", task.status.value, task.filename, task.downloaded)
             self._runners.pop(task.id, None)
             if task.id in self._held:
                 self._held.discard(task.id)
@@ -894,6 +968,7 @@ class DownloadManager:
             self._window_was_open = open_now
         elif open_now != self._window_was_open:
             self._window_was_open = open_now
+            log.info("scheduler window %s", "opened" if open_now else "closed: pausing active downloads")
             if open_now:
                 self._schedule_soon()
             else:
@@ -931,8 +1006,12 @@ class DownloadManager:
         self._interrupted: list[str] = []
         for item in data.get("tasks", []):
             try:
+                headers = item.get("headers") or {}
+                if isinstance(headers, dict):
+                    item["headers"] = {k: _unprotect_header(k, v) for k, v in headers.items()}
                 task = DownloadTask.from_dict(item)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OSError) as exc:
+                log.warning("skipping unreadable history entry: %s", exc)
                 continue
             if item.get("status") in (Status.DOWNLOADING.value, Status.QUEUED.value):
                 self._interrupted.append(task.id)  # was running when the app died
@@ -944,10 +1023,27 @@ class DownloadManager:
                     t.status = Status.QUEUED
 
     def _save(self) -> None:
-        data = {"tasks": [t.to_dict() for t in self.tasks.values()]}
+        data = {"tasks": [_serialize(t) for t in self.tasks.values()]}
         tmp = self.state_path.with_suffix(".tmp")
         try:
             tmp.write_text(json.dumps(data, indent=1), "utf-8")
             tmp.replace(self.state_path)
-        except OSError:
-            pass
+        except OSError as exc:
+            log.warning("could not save download history: %s", exc)
+
+
+def _serialize(task: DownloadTask) -> dict[str, Any]:
+    """to_dict() with cookies and Authorization values protected for the current user."""
+    d = task.to_dict()
+    if d.get("headers"):
+        d["headers"] = {
+            k: (protect(v) if k.lower() in SENSITIVE_HEADERS and isinstance(v, str) else v)
+            for k, v in d["headers"].items()
+        }
+    return d
+
+
+def _unprotect_header(name: str, value: Any) -> Any:
+    if name.lower() in SENSITIVE_HEADERS and isinstance(value, str):
+        return unprotect(value)
+    return value

@@ -34,14 +34,16 @@ TikTok and 1000+ site video, audio and thumbnail downloads through yt-dlp, **Bit
   stopping it.
 - **Resume anything**: segment offsets are saved every two seconds. Pause, close, crash, or
   reboot and continue from the exact byte. Interrupted downloads resume automatically.
-- **Browser integration** (Chrome, Edge, Brave): catches downloads, lists video and audio
+- **Browser integration** (Chrome, Edge, Brave, Firefox): catches downloads, lists video and audio
   streams playing on a tab, right-click "Download with IDM Clone", cookies and referrer
   forwarded so logged-in downloads work.
 - **Video, audio and thumbnails**: YouTube, Facebook, Instagram, TikTok, Vimeo, Twitter, Twitch
   and everything yt-dlp supports. The quality picker lists every resolution and container
   (MP4, WebM, 3GP where the site offers it), audio-only (m4a or converted to MP3), and the
   thumbnail image on its own; a checkbox saves the thumbnail next to the video. One-click
-  ffmpeg install for HD merging.
+  ffmpeg install for HD merging. **yt-dlp keeps itself current**: the newest release is fetched
+  into the app data folder at startup and used instead of the bundled copy, so site breakages
+  are fixed without waiting for a new app version.
 - **Torrents**: paste a magnet link, open a .torrent file or link, or drop one on the window.
   Powered by libtorrent with DHT, peer exchange, UPnP, a live piece map in the progress bar,
   fast-resume data (no re-hashing after a restart), optional seeding, upload and connection
@@ -86,7 +88,7 @@ inside the app for HD video.
 
 ## Browser setup (once)
 
-The installer registers the native host for Chrome, Edge and Brave, and the app opens a
+The installer registers the native host for Chrome, Edge, Brave and Firefox, and the app opens a
 **welcome window on first start** that walks you through the one remaining step. Loading
 the extension is manual because it is not on the Chrome Web Store yet:
 
@@ -95,6 +97,12 @@ the extension is manual because it is not on the Chrome Web Store yet:
 2. Turn on **Developer mode**, click **Load unpacked**, and choose the folder shown
    (**Copy path** puts it on your clipboard).
 3. The window turns green the moment the extension connects.
+
+**Firefox** has no "Load unpacked": open `about:debugging#/runtime/this-firefox`, click **Load
+Temporary Add-on** and pick `manifest.json` inside the extension folder, then open the add-on's
+*Permissions* tab and allow **Access your data for all websites** (Firefox does not grant host
+permissions automatically). Temporary add-ons disappear when Firefox closes; a signed `.xpi`
+that survives restarts will be published through addons.mozilla.org.
 
 From then on, like IDM:
 

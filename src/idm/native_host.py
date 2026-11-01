@@ -1,4 +1,4 @@
-"""Chrome/Edge native messaging host.
+"""Chrome/Edge/Brave/Firefox native messaging host.
 
 The browser launches this process and talks to it over stdin/stdout using Chrome's
 4-byte-length-prefixed JSON framing. We forward each message to the running desktop

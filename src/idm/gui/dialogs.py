@@ -134,6 +134,7 @@ BROWSERS = (
     ("Google Chrome", ("Google\\Chrome\\Application\\chrome.exe",), "chrome://extensions"),
     ("Microsoft Edge", ("Microsoft\\Edge\\Application\\msedge.exe",), "edge://extensions"),
     ("Brave", ("BraveSoftware\\Brave-Browser\\Application\\brave.exe",), "brave://extensions"),
+    ("Firefox", ("Mozilla Firefox\\firefox.exe",), "about:debugging#/runtime/this-firefox"),
 )
 
 
@@ -240,7 +241,10 @@ class BrowserSetupDialog(QDialog):
             "<b>Load the extension (one time)</b><br>"
             "1. Open your browser's extensions page with a button below.<br>"
             "2. Turn on <b>Developer mode</b> (top right).<br>"
-            "3. Click <b>Load unpacked</b> and choose this folder (use <b>Copy path</b>):"
+            "3. Click <b>Load unpacked</b> and choose this folder (use <b>Copy path</b>):<br>"
+            "<span style='opacity:0.75'>Firefox: <i>This Firefox → Load Temporary Add-on</i>, pick "
+            "<code>manifest.json</code> in that folder, then allow <i>Access your data for all websites</i> "
+            "under the add-on's Permissions tab. Temporary add-ons are removed when Firefox closes.</span>"
         )
         steps.setWordWrap(True)
         root.addWidget(steps)
@@ -278,7 +282,7 @@ class BrowserSetupDialog(QDialog):
                 row.addWidget(b)
         else:
             none = QLabel(
-                "No Chrome, Edge or Brave installation was found. Install one, then open its extensions page."
+                "No Chrome, Edge, Brave or Firefox installation was found. Install one, then open its extensions page."
             )
             none.setObjectName("warn")
             none.setWordWrap(True)

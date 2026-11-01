@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-_URL_RE = re.compile(r"^(https?|ftp)://\S+$", re.IGNORECASE)
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)  # the engine speaks HTTP(S) only; no FTP
 _MAGNET_RE = re.compile(r"^magnet:\?\S+$", re.IGNORECASE)
 
 
@@ -73,7 +73,7 @@ def fmt_time(ts: float | None) -> str:
 
 
 def looks_like_url(text: str) -> bool:
-    """True for http(s)/ftp links and magnet links (anything the add dialog can take as one line)."""
+    """True for http(s) links and magnet links (anything the add dialog can take as one line)."""
     text = text.strip()
     if not text or "\n" in text:
         return False

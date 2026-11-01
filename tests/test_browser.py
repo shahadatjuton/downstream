@@ -23,7 +23,7 @@ from idm.gui.add_dialog import AddDownloadDialog
 from idm.gui.main_window import MainWindow
 from idm.gui.theme import apply_theme
 
-from .test_engine import FILE_SIZE, TestServer
+from .test_engine import FILE_SIZE, LocalServer
 from .test_gui import pump, wait_until
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

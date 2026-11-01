@@ -1,9 +1,12 @@
-# Registers the IDM Clone native messaging host for Chrome and Edge so the browser
+# Registers the IDM Clone native messaging host for Chrome, Edge, Brave and Firefox so the browser
 # extension can talk to the desktop app. Run again after moving the app.
 #
-#   powershell -ExecutionPolicy Bypass -File scriptsegister-browser.ps1            # packaged app (after install.ps1 / build-exe.ps1)
-#   powershell -ExecutionPolicy Bypass -File scriptsegister-browser.ps1 -Dev       # run from this source tree with the venv
-#   powershell -ExecutionPolicy Bypass -File scriptsegister-browser.ps1 -Unregister
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1            # packaged app (after install.ps1 / build-exe.ps1)
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1 -Dev       # run from this source tree with the venv
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1 -Unregister
 param([switch]$Dev, [switch]$Unregister)
 
 $ErrorActionPreference = "Stop"
@@ -11,8 +14,10 @@ $root = Split-Path -Parent $PSScriptRoot
 $hostName = "com.idmclone.host"
 $keyInfo = Get-Content (Join-Path $root "extension\.extension-key.json") | ConvertFrom-Json
 $extId = $keyInfo.id
+$geckoId = $keyInfo.gecko_id
 $hostDir = Join-Path $env:LOCALAPPDATA "Programs\IDM Clone\host"
 $manifestPath = Join-Path $hostDir "$hostName.json"
+$firefoxManifestPath = Join-Path $hostDir "$hostName.firefox.json"
 
 $regPaths = @(
     "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$hostName",
@@ -20,9 +25,10 @@ $regPaths = @(
     "HKCU:\Software\Chromium\NativeMessagingHosts\$hostName",
     "HKCU:\Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\$hostName"
 )
+$firefoxRegPath = "HKCU:\Software\Mozilla\NativeMessagingHosts\$hostName"
 
 if ($Unregister) {
-    foreach ($p in $regPaths) { if (Test-Path $p) { Remove-Item -Path $p -Recurse -Force } }
+    foreach ($p in ($regPaths + $firefoxRegPath)) { if (Test-Path $p) { Remove-Item -Path $p -Recurse -Force } }
     if (Test-Path $hostDir) { Remove-Item -Recurse -Force $hostDir }
     Write-Host "Native host unregistered."
     exit 0
@@ -70,11 +76,25 @@ foreach ($p in $regPaths) {
     Set-ItemProperty -Path $p -Name "(Default)" -Value $manifestPath
 }
 
+# Firefox uses the same host but identifies the extension by its gecko id, not an origin.
+$firefoxManifest = @{
+    name = $hostName
+    description = "IDM Clone native messaging host"
+    path = $hostExe
+    type = "stdio"
+    allowed_extensions = @($geckoId)
+} | ConvertTo-Json
+Set-Content -Path $firefoxManifestPath -Value $firefoxManifest -Encoding ascii
+New-Item -Path $firefoxRegPath -Force | Out-Null
+Set-ItemProperty -Path $firefoxRegPath -Name "(Default)" -Value $firefoxManifestPath
+
 Write-Host ""
-Write-Host "Native host registered for Chrome, Edge, Chromium and Brave."
-Write-Host "Host manifest: $manifestPath"
+Write-Host "Native host registered for Chrome, Edge, Chromium, Brave and Firefox."
+Write-Host "Host manifests: $manifestPath, $firefoxManifestPath"
 Write-Host ""
 Write-Host "Now load the extension:"
 Write-Host "  1. Open chrome://extensions (or edge://extensions) and turn on Developer mode."
 Write-Host "  2. Click 'Load unpacked' and choose: $(Join-Path $root 'extension')"
 Write-Host "  3. The extension ID must be: $extId"
+Write-Host "  Firefox: open about:debugging#/runtime/this-firefox, 'Load Temporary Add-on', pick extension\manifest.json,"
+Write-Host "           then allow 'Access your data for all websites' in the add-on's Permissions tab."

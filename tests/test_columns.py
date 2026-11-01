@@ -14,12 +14,12 @@ from idm.engine import DownloadManager, DownloadTask, DuplicateError, Settings, 
 from idm.gui.models import COL_DESC, COL_STATUS, COLUMNS, description_text, status_text
 from idm.gui.util import short_error
 
-from .test_engine import TestServer
+from .test_engine import LocalServer
 
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

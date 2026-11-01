@@ -18,7 +18,7 @@ from idm.gui.main_window import CountRole, MainWindow
 from idm.gui.models import COL_STATUS, TaskFilter
 from idm.gui.theme import apply_theme
 
-from .test_engine import FILE_SIZE, TestServer
+from .test_engine import FILE_SIZE, LocalServer
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +28,7 @@ def app():
 
 @pytest.fixture
 def server():
-    s = TestServer().start()
+    s = LocalServer().start()
     yield s
     s.stop()
 

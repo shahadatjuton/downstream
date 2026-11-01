@@ -145,7 +145,7 @@ def host_registered() -> bool:
         return False
     import winreg
 
-    for base in ("Google\\Chrome", "Microsoft\\Edge", "Chromium", "BraveSoftware\\Brave-Browser"):
+    for base in ("Google\\Chrome", "Microsoft\\Edge", "Chromium", "BraveSoftware\\Brave-Browser", "Mozilla"):
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"Software\\{base}\\NativeMessagingHosts\\com.idmclone.host"):
                 return True
@@ -762,6 +762,15 @@ class MainWindow(QMainWindow):
         self.details.setVisible(checked)
 
     def _on_engine_event(self, name: str, task: DownloadTask) -> None:
+        if name == "ytdlp-updated":
+            self.statusBar().showMessage(f"yt-dlp updated to {task.filename}: newest site support is active", 10000)
+            return
+        if name == "ytdlp-current":
+            self.statusBar().showMessage(f"yt-dlp {task.filename} is up to date", 6000)
+            return
+        if name == "ytdlp-failed":
+            self.statusBar().showMessage(f"yt-dlp update failed: {task.error}", 10000)
+            return
         if name == "add-failed":
             QMessageBox.warning(self, "Could not add download", f"{task.url}\n\n{task.error}")
             return
