@@ -54,11 +54,13 @@ async function refreshList(tab) {
 
 (async () => {
   const tab = await currentTab();
-  const settings = await chrome.storage.local.get({ intercept: true, sniff: true, overlay: true });
+  const settings = await chrome.storage.local.get({ intercept: true, sniff: true, overlay: true, magnets: true });
   $("intercept").checked = settings.intercept;
   $("sniff").checked = settings.sniff;
   $("overlay").checked = settings.overlay;
+  $("magnets").checked = settings.magnets;
   $("overlay").onchange = (e) => chrome.storage.local.set({ overlay: e.target.checked });
+  $("magnets").onchange = (e) => chrome.storage.local.set({ magnets: e.target.checked });
   $("intercept").onchange = (e) => chrome.storage.local.set({ intercept: e.target.checked });
   $("sniff").onchange = (e) => chrome.storage.local.set({ sniff: e.target.checked });
 

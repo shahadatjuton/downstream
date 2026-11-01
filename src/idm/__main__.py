@@ -1,8 +1,10 @@
 """Entry point.
 
 python -m idm                 -> desktop GUI
-python -m idm URL [URL...]    -> download in the terminal (no GUI)
-python -m idm --gui URL       -> open the GUI with the add-dialog prefilled
+python -m idm URL [URL...]    -> download in the terminal (no GUI); URL may also be a magnet link,
+                                 a MEGA link, a video page, or a .torrent file / link
+python -m idm --gui URL       -> open the GUI with the add-dialog prefilled (also how Windows hands
+                                 over magnet: links and .torrent files when the app is registered)
 """
 
 from __future__ import annotations
@@ -34,7 +36,11 @@ def _cli_download(urls: list[str], args: argparse.Namespace) -> int:
                 print(f"error: {url}: {exc}", file=sys.stderr)
                 exit_code = 1
                 continue
-            what = "video via yt-dlp" if task.kind == "media" else ("resumable" if task.resumable else "single stream")
+            what = {
+                "media": "video via yt-dlp",
+                "torrent": "torrent",
+                "mega": "MEGA, decrypted on the fly",
+            }.get(task.kind, "resumable" if task.resumable else "single stream")
             print(f"{task.filename}  ({fmt_bytes(task.size)}, {what})")
             ids.append(task.id)
 
@@ -69,7 +75,9 @@ def _cli_download(urls: list[str], args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="idm-clone", description="Segmented download manager")
-    parser.add_argument("urls", nargs="*", help="URLs to download from the terminal; omit to open the GUI")
+    parser.add_argument(
+        "urls", nargs="*", help="links to download from the terminal (http, magnet, MEGA, .torrent); omit for the GUI"
+    )
     parser.add_argument("--gui", action="store_true", help="open the GUI (with the first URL prefilled)")
     parser.add_argument("-d", "--dir", help="destination folder (CLI mode)")
     parser.add_argument("-o", "--output", help="output filename (CLI mode, single URL)")

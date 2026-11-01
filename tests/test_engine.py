@@ -77,6 +77,16 @@ class TestServer:
                 await asyncio.sleep(self.delay)
         return resp
 
+    async def _auth(self, request: web.Request) -> web.StreamResponse:
+        """/file, but only for alice:secret (HTTP Basic); otherwise 401."""
+        import base64
+
+        expected = "Basic " + base64.b64encode(b"alice:secret").decode()
+        if request.headers.get("Authorization") != expected:
+            self.requests.append(dict(request.headers))
+            return web.Response(status=401, headers={"WWW-Authenticate": 'Basic realm="Members"'})
+        return await self._file(request)
+
     async def _norange(self, request: web.Request) -> web.StreamResponse:
         self.requests.append(dict(request.headers))
         resp = web.StreamResponse(status=200, headers={"Content-Length": str(FILE_SIZE)})
@@ -110,6 +120,7 @@ class TestServer:
         app = web.Application()
         app.router.add_get("/file", self._file)
         app.router.add_get("/norange", self._norange)
+        app.router.add_get("/auth", self._auth)
         app.router.add_get("/chunked", self._chunked)
         app.router.add_get("/page", self._page)
         runner = web.AppRunner(app)

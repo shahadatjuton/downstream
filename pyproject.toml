@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "idm-clone"
 dynamic = ["version"]
-description = "Open-source download manager for Windows: segmented downloads, resume, browser integration, and video downloads"
+description = "Open-source download manager for Windows: segmented downloads, resume, browser integration, video, torrent and MEGA downloads"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "Shahadat Hossain" }]
 requires-python = ">=3.11"
-keywords = ["download-manager", "downloader", "idm", "yt-dlp", "pyside6", "segmented-download"]
+keywords = ["download-manager", "downloader", "idm", "yt-dlp", "pyside6", "segmented-download", "torrent", "mega"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
@@ -29,6 +29,8 @@ dependencies = [
     "aiohttp>=3.9",
     "PySide6>=6.6",
     "yt-dlp>=2024.1.1",
+    "libtorrent>=2.0",
+    "pycryptodome>=3.19",
 ]
 
 [project.optional-dependencies]

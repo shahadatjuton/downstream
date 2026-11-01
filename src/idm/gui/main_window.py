@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -60,8 +61,10 @@ from .dialogs import ISSUES_URL, REPO_URL, AboutDialog, BrowserSetupDialog, Upda
 from .icons import CATEGORY_ICONS, icon
 from .models import (
     COL_ADDED,
+    COL_DESC,
     COL_ETA,
     COL_NAME,
+    COL_PROGRESS,
     COL_SIZE,
     COL_SPEED,
     COL_STATUS,
@@ -74,7 +77,7 @@ from .models import (
 )
 from .settings_dialog import SettingsDialog
 from .theme import Theme, apply_theme
-from .util import fmt_speed, looks_like_url
+from .util import fmt_speed, is_torrent_path, link_kind, looks_like_url, source_label
 
 DOWNLOADABLE_HINT_EXTS = {
     "zip",
@@ -104,6 +107,11 @@ DOWNLOADABLE_HINT_EXTS = {
     "jpg",
     "png",
     "gif",
+    "torrent",
+    "3gp",
+    "m4a",
+    "aac",
+    "ogg",
 }
 
 SIDEBAR_ICONS = {TaskFilter.ALL: "list", TaskFilter.ACTIVE: "clock", TaskFilter.DONE: "check", **CATEGORY_ICONS}
@@ -291,6 +299,7 @@ class MainWindow(QMainWindow):
         file_menu = mb.addMenu("&File")
         file_menu.addAction("&Add link…", self.add_url, QKeySequence("Ctrl+N"))
         file_menu.addAction("Add &many links…", lambda: self.add_url("\n"), QKeySequence("Ctrl+Shift+N"))
+        file_menu.addAction("Add &torrent file…", self.add_torrent_file, QKeySequence("Ctrl+T"))
         file_menu.addAction("&Paste link from clipboard", self._paste_url, QKeySequence("Ctrl+Shift+V"))
         file_menu.addSeparator()
         file_menu.addAction("Open &downloads folder", lambda: _open_path(Path(self.manager.settings.download_dir)))
@@ -422,8 +431,8 @@ class MainWindow(QMainWindow):
         self.proxy = TaskProxyModel(self.model, self)
         self.table = QTableView()
         self.table.setModel(self.proxy)
-        self.progress_delegate = ProgressDelegate(self.theme, self.table)
-        self.table.setItemDelegateForColumn(COL_STATUS, self.progress_delegate)
+        self.progress_delegate = ProgressDelegate(self.theme, self.table, manager=self.manager)
+        self.table.setItemDelegateForColumn(COL_PROGRESS, self.progress_delegate)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -439,7 +448,15 @@ class MainWindow(QMainWindow):
         header.setMinimumSectionSize(60)
         header.setHighlightSections(False)
         header.setSectionsClickable(True)
-        for col, width in ((COL_SIZE, 90), (COL_STATUS, 260), (COL_SPEED, 100), (COL_ETA, 90), (COL_ADDED, 130)):
+        for col, width in (
+            (COL_SIZE, 90),
+            (COL_STATUS, 150),
+            (COL_PROGRESS, 240),
+            (COL_SPEED, 100),
+            (COL_ETA, 90),
+            (COL_DESC, 160),
+            (COL_ADDED, 130),
+        ):
             self.table.setColumnWidth(col, width)
         self.table.setSortingEnabled(True)
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)  # insertion (queue) order until the user sorts
@@ -592,7 +609,7 @@ class MainWindow(QMainWindow):
         current = self.sidebar.currentItem().text() if self.sidebar.currentItem() else TaskFilter.ALL
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
-        names = [*TaskFilter.PSEUDO, *self.manager.settings.categories.keys()]
+        names = [*TaskFilter.PSEUDO, *self.manager.settings.categories.keys(), TaskFilter.TORRENTS]
         for name in names:
             item = QListWidgetItem(name)
             item.setData(IconRole, SIDEBAR_ICONS.get(name, "folder"))
@@ -695,6 +712,9 @@ class MainWindow(QMainWindow):
             parts.append(f"{queued} queued")
         if total_speed:
             parts.append(fmt_speed(total_speed))
+        sched = self.manager.schedule_note()
+        if sched:
+            parts.append(f"Scheduler {sched}")
         status = "  ·  ".join(parts) if parts else "Idle"
         if not self.statusBar().currentMessage() or self.statusBar().currentMessage() in ("Ready", "Idle") or parts:
             self.statusBar().showMessage(status)
@@ -788,8 +808,8 @@ class MainWindow(QMainWindow):
             return
         if cmd != "add":
             return
-        url = str(msg.get("url", "")).strip()
-        if not looks_like_url(url):
+        url = str(msg.get("url", "")).strip().strip('"')
+        if not link_kind(url):
             return
         headers = {k: v for k, v in (msg.get("headers") or {}).items() if isinstance(k, str) and isinstance(v, str)}
         kind = str(msg.get("kind") or "auto")
@@ -890,15 +910,19 @@ class MainWindow(QMainWindow):
             _open_path(Path(task.dest_dir))
 
     def _on_clipboard(self) -> None:
-        if not self.manager.settings.watch_clipboard:
+        settings = self.manager.settings
+        if not settings.watch_clipboard:
             return
         text = QApplication.clipboard().text().strip()
         if text == self._last_clip or not looks_like_url(text):
             return
         self._last_clip = text
+        kind = link_kind(text)
         ext = Path(text.split("?")[0].split("#")[0]).suffix.lower().lstrip(".")
-        if ext in DOWNLOADABLE_HINT_EXTS:
+        special = kind in ("magnet", "mega", "torrent", "video")
+        if ext in DOWNLOADABLE_HINT_EXTS or (special and settings.watch_clipboard_sites):
             self._show_from_tray()
+            self.statusBar().showMessage(f"Found a {source_label(text)} on the clipboard", 4000)
             self.add_url(text)
 
     def _paste_url(self) -> None:
@@ -930,9 +954,13 @@ class MainWindow(QMainWindow):
     def _urls_from_mime(mime) -> list[str]:
         found: list[str] = []
         if mime.hasUrls():
-            found = [u.toString() for u in mime.urls() if u.scheme() in ("http", "https", "ftp")]
+            for u in mime.urls():
+                if u.scheme() in ("http", "https", "ftp", "magnet"):
+                    found.append(u.toString())
+                elif u.isLocalFile() and is_torrent_path(u.toLocalFile()):
+                    found.append(u.toLocalFile())
         if not found and mime.hasText():
-            found = [line.strip() for line in mime.text().splitlines() if looks_like_url(line.strip())]
+            found = [line.strip() for line in mime.text().splitlines() if link_kind(line.strip())]
         return found
 
     # ------------------------------------------------------------- actions
@@ -974,6 +1002,22 @@ class MainWindow(QMainWindow):
 
         for fut in futures:
             fut.add_done_callback(done)
+
+    def add_torrent_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Add torrent file", "", "Torrent files (*.torrent)")
+        if path:
+            self.add_url(path, kind="torrent")
+
+    def save_thumbnail_selected(self) -> None:
+        """Download the thumbnail image of the selected video next to it."""
+        for t in self.selected_tasks():
+            if t.kind != "media" or not t.thumbnail:
+                continue
+            from ..engine.media import thumbnail_ext
+
+            name = f"{Path(t.filename).stem}.{thumbnail_ext(t.thumbnail)}"
+            self.manager.add(t.thumbnail, dest_dir=t.dest_dir, filename=name, connections=1, referrer=t.url)
+            self.statusBar().showMessage(f"Saving thumbnail as {name}", 4000)
 
     def _select_task(self, task_id: str) -> None:
         self.model.refresh()
@@ -1028,7 +1072,7 @@ class MainWindow(QMainWindow):
     def copy_link_selected(self) -> None:
         sel = self.selected_tasks()
         if sel:
-            QApplication.clipboard().setText("\n".join(t.url for t in sel))
+            QApplication.clipboard().setText("\n".join(t.origin or t.url for t in sel))
             self._last_clip = QApplication.clipboard().text().strip()  # don't re-offer our own copy
             self.statusBar().showMessage("Link copied", 2000)
 
@@ -1059,6 +1103,11 @@ class MainWindow(QMainWindow):
 
             if new.start_with_windows != winstartup.is_enabled():
                 winstartup.set_enabled(new.start_with_windows)
+            from . import protocols
+
+            if new.handle_magnet_links != protocols.is_registered():
+                if not protocols.set_registered(new.handle_magnet_links):
+                    QMessageBox.warning(self, "Magnet links", "Could not change the magnet link handler.")
             self.manager.update_settings(new)
             self._rebuild_sidebar()
             if new.theme != old_theme:
@@ -1075,10 +1124,13 @@ class MainWindow(QMainWindow):
             if done:
                 menu.addAction("Show in folder", self.open_folder_selected)
             menu.addAction(self._icon("paste"), "Copy link", self.copy_link_selected)
+            if t.kind == "media" and t.thumbnail:
+                menu.addAction(self._icon("image"), "Save thumbnail image", self.save_thumbnail_selected)
             menu.addSeparator()
             menu.addAction(self._icon("play"), "Resume", self.resume_selected).setEnabled(self.act_resume.isEnabled())
             menu.addAction(self._icon("pause"), "Pause", self.pause_selected).setEnabled(self.act_pause.isEnabled())
             if not done:
+                self._add_limit_menus(menu, sel)
                 queue = menu.addMenu("Queue position")
                 queue.addAction("Move to top", lambda: self.move_selected("top"))
                 queue.addAction("Move up", lambda: self.move_selected("up"))
@@ -1089,10 +1141,60 @@ class MainWindow(QMainWindow):
             menu.addAction("Remove and delete file", lambda: self.remove_selected(True))
         else:
             menu.addAction(self._icon("download"), "Add link…", self.add_url)
+            menu.addAction(self._icon("torrent"), "Add torrent file…", self.add_torrent_file)
             menu.addAction(self._icon("paste"), "Paste link(s) from clipboard", self._paste_url)
             menu.addSeparator()
             menu.addAction(self._icon("check"), "Clear finished", self.clear_completed)
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    SPEED_PRESETS = (("Unlimited", 0), ("64 KB/s", 64), ("256 KB/s", 256), ("1 MB/s", 1024), ("5 MB/s", 5120))
+    CONNECTION_PRESETS = (1, 2, 4, 8, 16, 32)
+
+    def _add_limit_menus(self, menu: QMenu, sel: list[DownloadTask]) -> None:
+        """'Speed limit' and 'Connections' submenus acting on the selection, applied live."""
+        t = sel[0]
+        speed = menu.addMenu("Speed limit")
+        current_kb = t.speed_limit // 1024
+        for label, kb in self.SPEED_PRESETS:
+            a = speed.addAction(label, lambda kb=kb: self.set_limit_selected(kb * 1024))
+            a.setCheckable(True)
+            a.setChecked(current_kb == kb)
+        speed.addAction("Custom…", self._custom_limit_selected)
+        if t.kind in ("file", "mega"):
+            conns = menu.addMenu("Connections")
+            for n in self.CONNECTION_PRESETS:
+                a = conns.addAction(str(n), lambda n=n: self.set_connections_selected(n))
+                a.setCheckable(True)
+                a.setChecked(t.connections == n)
+
+    def set_limit_selected(self, bytes_per_sec: int) -> None:
+        for t in self.selected_tasks():
+            self.manager.set_task_limit(t.id, bytes_per_sec)
+        label = "unlimited" if bytes_per_sec <= 0 else fmt_speed(bytes_per_sec)
+        self.statusBar().showMessage(f"Speed limit for the selection: {label}", 3000)
+
+    def _custom_limit_selected(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+
+        sel = self.selected_tasks()
+        if not sel:
+            return
+        kb, ok = QInputDialog.getInt(
+            self,
+            "Speed limit",
+            "KB/s for the selected download(s), 0 = unlimited:",
+            sel[0].speed_limit // 1024,
+            0,
+            10_000_000,
+        )
+        if ok:
+            self.set_limit_selected(kb * 1024)
+
+    def set_connections_selected(self, n: int) -> None:
+        for t in self.selected_tasks():
+            if t.kind in ("file", "mega"):
+                self.manager.set_task_connections(t.id, n)
+        self.statusBar().showMessage(f"Connections for the selection: {n}", 3000)
 
     # ----------------------------------------------------------- lifecycle
     def _show_from_tray(self) -> None:

@@ -213,6 +213,35 @@ def _paste(p: QPainter, r: QRectF) -> None:
     p.drawRoundedRect(_sub(r, 0.36, 0.08, 0.28, 0.14), 1, 1)
 
 
+def _torrent(p: QPainter, r: QRectF) -> None:
+    # A horseshoe magnet.
+    path = QPainterPath()
+    path.moveTo(_pt(r, 0.22, 0.12))
+    path.lineTo(_pt(r, 0.22, 0.52))
+    path.arcTo(QRectF(_pt(r, 0.22, 0.24).x(), _pt(r, 0.22, 0.24).y(), r.width() * 0.56, r.height() * 0.56), 180, 180)
+    path.lineTo(_pt(r, 0.78, 0.12))
+    p.drawPath(path)
+    _line(p, r, 0.22, 0.12, 0.4, 0.12)
+    _line(p, r, 0.6, 0.12, 0.78, 0.12)
+    _line(p, r, 0.22, 0.3, 0.4, 0.3)
+    _line(p, r, 0.6, 0.3, 0.78, 0.3)
+    _line(p, r, 0.4, 0.12, 0.4, 0.3)
+    _line(p, r, 0.6, 0.12, 0.6, 0.3)
+
+
+def _cloud(p: QPainter, r: QRectF) -> None:
+    path = QPainterPath()
+    path.moveTo(_pt(r, 0.3, 0.78))
+    path.arcTo(QRectF(_pt(r, 0.1, 0.5).x(), _pt(r, 0.1, 0.5).y(), r.width() * 0.34, r.height() * 0.3), 250, -180)
+    path.arcTo(QRectF(_pt(r, 0.28, 0.26).x(), _pt(r, 0.28, 0.26).y(), r.width() * 0.44, r.height() * 0.44), 170, -180)
+    path.arcTo(QRectF(_pt(r, 0.56, 0.44).x(), _pt(r, 0.56, 0.44).y(), r.width() * 0.34, r.height() * 0.34), 100, -190)
+    path.closeSubpath()
+    p.drawPath(path)
+    _line(p, r, 0.5, 0.5, 0.5, 0.72)
+    _line(p, r, 0.42, 0.64, 0.5, 0.72)
+    _line(p, r, 0.58, 0.64, 0.5, 0.72)
+
+
 def _warning(p: QPainter, r: QRectF) -> None:
     p.drawPolygon(QPolygonF([_pt(r, 0.5, 0.1), _pt(r, 0.92, 0.88), _pt(r, 0.08, 0.88)]))
     _line(p, r, 0.5, 0.38, 0.5, 0.62)
@@ -243,6 +272,8 @@ SHAPES: dict[str, Drawer] = {
     "file": _file,
     "paste": _paste,
     "warning": _warning,
+    "torrent": _torrent,
+    "cloud": _cloud,
 }
 
 CATEGORY_ICONS = {
@@ -252,6 +283,7 @@ CATEGORY_ICONS = {
     "Programs": "program",
     "Video": "video",
     "Images": "image",
+    "Torrents": "torrent",
 }
 
 

@@ -6,7 +6,7 @@
 const HOST = "com.idmclone.host";
 const MEDIA_TYPES = /^(video\/|audio\/|application\/(vnd\.apple\.mpegurl|x-mpegurl|dash\+xml|octet-stream))/i;
 const MEDIA_EXT = /\.(mp4|m4v|webm|mkv|mov|avi|flv|mp3|m4a|aac|ogg|wav|flac|m3u8|mpd|ts)(\?|#|$)/i;
-const FILE_EXT = /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|apk|dmg|deb|rpm|pdf|epub|mp4|mkv|mp3|flac)(\?|#|$)/i;
+const FILE_EXT = /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|apk|dmg|deb|rpm|pdf|epub|mp4|mkv|mp3|flac|torrent)(\?|#|$)/i;
 const SKIP_HOSTS = /(^|\.)googlevideo\.com$|(^|\.)fbcdn\.net$|(^|\.)ttvnw\.net$/i;
 const MIN_MEDIA_BYTES = 512 * 1024;
 
@@ -14,7 +14,7 @@ const mediaByTab = new Map(); // tabId -> Map(url -> {url, type, size, filename,
 
 // ---------------------------------------------------------------- settings
 async function getSettings() {
-  const d = await chrome.storage.local.get({ intercept: true, sniff: true, minSizeMB: 1 });
+  const d = await chrome.storage.local.get({ intercept: true, sniff: true, magnets: true, minSizeMB: 1 });
   return d;
 }
 
@@ -36,6 +36,7 @@ function sendToApp(msg) {
 }
 
 async function cookieHeaderFor(url) {
+  if (!/^https?:/i.test(url)) return ""; // magnet: and friends carry no cookies
   try {
     const cookies = await chrome.cookies.getAll({ url });
     if (!cookies.length) return "";
@@ -188,7 +189,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const pageUrl = info.pageUrl || (tab && tab.url) || "";
   if (info.menuItemId === "dl-link" && info.linkUrl) {
-    await addDownload({ url: info.linkUrl, referrer: pageUrl, pageUrl, kind: "auto" });
+    const kind = /^magnet:/i.test(info.linkUrl) ? "torrent" : "auto";
+    await addDownload({ url: info.linkUrl, referrer: pageUrl, pageUrl, kind });
   } else if (info.menuItemId === "dl-media" && info.srcUrl) {
     await addDownload({ url: info.srcUrl, referrer: pageUrl, pageUrl, kind: "file" });
   } else if (info.menuItemId === "dl-page" && pageUrl) {
@@ -217,6 +219,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       } else {
         sendResponse(await addDownload({ url: msg.pageUrl, referrer: msg.pageUrl, pageUrl: msg.pageUrl, kind: "media" }));
       }
+    } else if (msg.type === "magnet") {
+      // A magnet link was clicked on a page (content.js). Torrents go straight to the app.
+      const s = await getSettings();
+      if (!s.magnets) { sendResponse({ ok: false, error: "disabled" }); return; }
+      sendResponse(await addDownload({ url: msg.url, referrer: msg.pageUrl, pageUrl: msg.pageUrl, kind: "torrent" }));
     } else if (msg.type === "ping") {
       sendResponse(await sendToApp({ cmd: "host-ping" }));
     } else if (msg.type === "show-app") {

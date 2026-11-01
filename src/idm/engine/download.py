@@ -7,6 +7,7 @@ import os
 import time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -17,6 +18,7 @@ import aiohttp
 CHUNK_SIZE = 64 * 1024
 MIN_SPLIT = 1024 * 1024  # a segment is only split if both halves would be >= this
 SPEED_WINDOW = 3.0  # seconds
+BURST_CREDIT = 0.25  # seconds of unused limit a throttled download may catch up on
 UNKNOWN = -1
 
 
@@ -56,7 +58,8 @@ class DownloadTask:
     dest_dir: str
     size: int | None = None
     resumable: bool = False
-    connections: int = 8
+    connections: int = 8  # may be changed while downloading; the runner adds/retires workers
+    speed_limit: int = 0  # bytes/s for this download only; 0 = use the global setting
     segments: list[Segment] = field(default_factory=list)
     status: Status = Status.QUEUED
     error: str | None = None
@@ -66,15 +69,24 @@ class DownloadTask:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: float = field(default_factory=time.time)
     completed_at: float | None = None
-    # "file" = plain HTTP download; "media" = page video/audio fetched through yt-dlp
+    # "file" = plain HTTP download; "media" = page video/audio fetched through yt-dlp;
+    # "mega" = MEGA.nz file (segmented download, decrypted on the fly); "torrent" = BitTorrent
     kind: str = "file"
     media_format: str = ""
     media_client: str = ""  # yt-dlp player client the chosen format came from (e.g. "android")
+    media_postprocess: str = ""  # e.g. "mp3": convert the audio track with ffmpeg after download
     title: str = ""
     referrer: str = ""
+    origin: str = ""  # the link the user gave (MEGA link, magnet, .torrent) when `url` is derived from it
+    crypto_key: str = ""  # MEGA: base64 file key (the download is decrypted while it streams in)
+    thumbnail: str = ""  # media: thumbnail URL, so it can be saved later from the context menu
 
-    # Runtime-only field (not persisted)
+    # Runtime-only fields (not persisted)
     speed: float = field(default=0.0, compare=False)
+    upload_speed: float = field(default=0.0, compare=False)
+    peers: int = field(default=0, compare=False)
+    seeds: int = field(default=0, compare=False)
+    note: str = field(default="", compare=False)  # short live status ("fetching metadata", "seeding", ...)
 
     # ---- derived ----
     @property
@@ -104,10 +116,13 @@ class DownloadTask:
         return max(0.0, (self.size - self.downloaded) / self.speed)
 
     # ---- persistence ----
+    RUNTIME_FIELDS = ("speed", "upload_speed", "peers", "seeds", "note")
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["status"] = self.status.value
-        d.pop("speed", None)
+        for k in self.RUNTIME_FIELDS:
+            d.pop(k, None)
         return d
 
     @classmethod
@@ -115,7 +130,8 @@ class DownloadTask:
         d = dict(d)
         d["segments"] = [Segment(**s) for s in d.get("segments", [])]
         d["status"] = Status(d.get("status", "queued"))
-        d.pop("speed", None)
+        for k in cls.RUNTIME_FIELDS:
+            d.pop(k, None)
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         task = cls(**known)
         if task.status == Status.DOWNLOADING:
@@ -126,6 +142,15 @@ class DownloadTask:
 
 class DownloadError(Exception):
     pass
+
+
+class DuplicateError(Exception):
+    """The same link is already in the list. `task` is the existing entry."""
+
+    def __init__(self, task: DownloadTask) -> None:
+        state = "was already downloaded" if task.status == Status.COMPLETED else "is already in the list"
+        super().__init__(f"{task.filename} {state}")
+        self.task = task
 
 
 class TaskRunner:
@@ -139,12 +164,14 @@ class TaskRunner:
         max_retries: int = 5,
         speed_limit: int = 0,
         proxy: str | None = None,
+        auth_header: str | None = None,
     ) -> None:
         self.task = task
         self.session = session
         self.max_retries = max_retries
         self.speed_limit = speed_limit
         self.proxy = proxy or None
+        self.auth_header = auth_header  # "Basic …" from the credential store; never persisted with the task
         self._stop = asyncio.Event()
         self._claimed: set[int] = set()  # ids of Segment objects in progress
         self._samples: deque[tuple[float, int]] = deque()
@@ -152,6 +179,8 @@ class TaskRunner:
         self._limit_bytes = 0
         self._error: str | None = None
         self._lock = asyncio.Lock()
+        self._workers: set[asyncio.Task] = set()
+        self._limit_seen = -1
 
     # ------------------------------------------------------------------ public
     def pause(self) -> None:
@@ -164,15 +193,16 @@ class TaskRunner:
         self._stop.clear()
         try:
             self._prepare_file()
-            n_workers = max(1, min(task.connections, 32)) if task.resumable else 1
-            workers = [asyncio.create_task(self._worker(i)) for i in range(n_workers)]
-            await asyncio.gather(*workers)
+            await self._supervise()
         except asyncio.CancelledError:
             self._stop.set()
             task.status = Status.PAUSED
+            await self._cancel_workers()
             raise
         except Exception as exc:  # noqa: BLE001
             self._error = f"{type(exc).__name__}: {exc}"
+            self._stop.set()
+            await self._cancel_workers()
 
         task.speed = 0.0
         if self._error:
@@ -186,7 +216,7 @@ class TaskRunner:
             return
         if self._all_done():
             try:
-                self._finalize()
+                await self._finalize_async()
             except OSError as exc:
                 task.status = Status.ERROR
                 task.error = f"could not finalize file: {exc}"
@@ -198,6 +228,46 @@ class TaskRunner:
             task.error = "download ended before all segments completed"
 
     # ---------------------------------------------------------------- helpers
+    def _wanted_workers(self) -> int:
+        return max(1, min(self.task.connections, 32)) if self.task.resumable else 1
+
+    def _has_work(self) -> bool:
+        """True while some segment is unclaimed or a claimed one is big enough to split."""
+        for s in self.task.segments:
+            if s.done:
+                continue
+            if id(s) not in self._claimed:
+                return True
+            if s.end != UNKNOWN and s.remaining >= 2 * MIN_SPLIT:
+                return True
+        return False
+
+    async def _supervise(self) -> None:
+        """Keep `task.connections` workers busy; the count can change while running."""
+        index = 0
+        while True:
+            self._workers = {w for w in self._workers if not w.done()}
+            while (
+                len(self._workers) < self._wanted_workers()
+                and not self._stop.is_set()
+                and self._error is None
+                and self._has_work()
+            ):
+                self._workers.add(asyncio.create_task(self._worker(index)))
+                index += 1
+            if not self._workers:
+                return
+            done, _ = await asyncio.wait(self._workers, timeout=0.5, return_when=asyncio.FIRST_COMPLETED)
+            for w in done:
+                w.result()  # re-raise anything a worker leaked
+
+    async def _cancel_workers(self) -> None:
+        for w in self._workers:
+            w.cancel()
+        if self._workers:
+            await asyncio.gather(*self._workers, return_exceptions=True)
+        self._workers.clear()
+
     def _prepare_file(self) -> None:
         task = self.task
         Path(task.dest_dir).mkdir(parents=True, exist_ok=True)
@@ -230,6 +300,10 @@ class TaskRunner:
             # Unknown size: done if the single segment read to EOF without being stopped.
             return not self._stop.is_set() and self._error is None
         return all(s.done for s in self.task.segments)
+
+    async def _finalize_async(self) -> None:
+        """Hook for subclasses that need work between the last byte and the rename."""
+        self._finalize()
 
     def _finalize(self) -> None:
         task = self.task
@@ -272,6 +346,8 @@ class TaskRunner:
         task = self.task
         with open(task.part_path, "r+b") as fh:
             while not self._stop.is_set() and self._error is None:
+                if len([w for w in self._workers if not w.done()]) > self._wanted_workers():
+                    return  # connections were lowered; let this worker retire
                 async with self._lock:
                     seg = self._claim() or self._split_busiest()
                 if seg is None:
@@ -297,6 +373,8 @@ class TaskRunner:
     async def _download_segment(self, seg: Segment, fh) -> None:
         task = self.task
         headers = dict(task.headers)
+        if self.auth_header and "Authorization" not in headers:
+            headers["Authorization"] = self.auth_header
         if task.resumable:
             if seg.end == UNKNOWN:
                 headers["Range"] = f"bytes={seg.position}-"
@@ -314,6 +392,7 @@ class TaskRunner:
                     raise DownloadError(f"server did not honour Range request (HTTP {resp.status})")
             resp.raise_for_status()
 
+            transform = self._transform_at(seg.position)
             fh.seek(seg.position)
             async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
                 if self._stop.is_set():
@@ -326,6 +405,8 @@ class TaskRunner:
                         break
                     if len(chunk) > room:
                         chunk = chunk[:room]
+                if transform is not None:
+                    chunk = transform(chunk)
                 fh.write(chunk)
                 seg.downloaded += len(chunk)
                 self._record(len(chunk))
@@ -344,6 +425,11 @@ class TaskRunner:
             elif not seg.done:
                 raise DownloadError(f"connection closed early at byte {seg.position} (expected up to {seg.end})")
 
+    def _transform_at(self, position: int) -> Callable[[bytes], bytes] | None:
+        """Subclasses can return a function applied to every chunk written from `position` on
+        (MEGA uses it to decrypt while downloading). None = write bytes as they arrive."""
+        return None
+
     def _record(self, n: int) -> None:
         now = time.monotonic()
         self._samples.append((now, n))
@@ -355,14 +441,24 @@ class TaskRunner:
         self.task.speed = total / max(span, 0.25)
         self._limit_bytes += n
 
+    @property
+    def effective_limit(self) -> int:
+        return self.task.speed_limit or self.speed_limit
+
     async def _throttle(self) -> None:
-        if self.speed_limit <= 0:
+        limit = self.effective_limit
+        if limit != self._limit_seen:
+            self._limit_seen = limit
+            self._limit_t0 = time.monotonic()
+            self._limit_bytes = 0
+        if limit <= 0:
             return
         now = time.monotonic()
         elapsed = now - self._limit_t0
-        expected = self._limit_bytes / self.speed_limit
+        expected = self._limit_bytes / limit
         if expected > elapsed:
             await asyncio.sleep(expected - elapsed)
-        if elapsed > 2.0:
-            self._limit_t0 = now
+        elif elapsed - expected > BURST_CREDIT:
+            # Idle time only buys a small burst, so a stall does not turn into a spike afterwards.
+            self._limit_t0 = now - BURST_CREDIT
             self._limit_bytes = 0

@@ -23,6 +23,23 @@ class ProbeResult:
     last_modified: str | None = None
 
 
+class AuthRequiredError(Exception):
+    """The server answered 401: it wants a username and password (HTTP Basic)."""
+
+    def __init__(self, url: str, realm: str = "") -> None:
+        detail = f" ({realm})" if realm else ""
+        super().__init__(f"HTTP 401: this site asks for a username and password{detail}")
+        self.url = url
+        self.realm = realm
+
+
+def realm_from_header(value: str | None) -> str:
+    if not value:
+        return ""
+    m = re.search(r'realm\s*=\s*"?([^",]+)"?', value, re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
 _SAFE_NAME = re.compile(r'[\/:*?"<>|\x00-\x1f]')
 
 
@@ -68,6 +85,8 @@ async def probe(
     req_headers = dict(headers or {})
     req_headers["Range"] = "bytes=0-0"
     async with session.get(url, headers=req_headers, allow_redirects=True, proxy=proxy or None) as resp:
+        if resp.status == 401:
+            raise AuthRequiredError(url, realm_from_header(resp.headers.get("WWW-Authenticate")))
         resp.raise_for_status()
         final_url = str(resp.url)
         content_type = resp.headers.get("Content-Type", "")

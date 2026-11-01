@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTime
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -16,15 +16,24 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTabWidget,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ..engine import Settings, find_ffmpeg
+
+DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _qtime(hhmm: str, fallback: str) -> QTime:
+    t = QTime.fromString(hhmm, "HH:mm")
+    return t if t.isValid() else QTime.fromString(fallback, "HH:mm")
 
 
 class SettingsDialog(QDialog):
@@ -55,6 +64,10 @@ class SettingsDialog(QDialog):
         self.watch_clipboard = QCheckBox("Offer to download URLs copied to the clipboard")
         self.watch_clipboard.setChecked(settings.watch_clipboard)
         form.addRow("", self.watch_clipboard)
+
+        self.watch_sites = QCheckBox("…including video pages (YouTube, Facebook, TikTok, …), magnet and MEGA links")
+        self.watch_sites.setChecked(settings.watch_clipboard_sites)
+        form.addRow("", self.watch_sites)
 
         self.show_complete = QCheckBox("Show a 'Download complete' popup with Open / Open folder buttons")
         self.show_complete.setChecked(settings.show_complete_dialog)
@@ -114,7 +127,55 @@ class SettingsDialog(QDialog):
 
         self.user_agent = QLineEdit(settings.user_agent)
         form.addRow("User-Agent:", self.user_agent)
+
+        self.logins = QListWidget()
+        self.logins.setFixedHeight(84)
+        self.logins.setToolTip("Sites you logged in to from the Add dialog; passwords are stored encrypted")
+        if manager is not None:
+            self.logins.addItems(manager.credentials.hosts())
+        forget = QPushButton("Forget selected")
+        forget.setAutoDefault(False)
+        forget.clicked.connect(self._forget_login)
+        logins_row = QHBoxLayout()
+        logins_row.addWidget(self.logins, 1)
+        logins_row.addWidget(forget, 0, Qt.AlignmentFlag.AlignTop)
+        form.addRow("Saved logins:", logins_row)
         tabs.addTab(conn, "Connection")
+
+        # --- Scheduler
+        sched = QWidget()
+        form = QFormLayout(sched)
+        self.schedule_enabled = QCheckBox("Only run queued downloads inside this time window")
+        self.schedule_enabled.setChecked(settings.schedule_enabled)
+        form.addRow("", self.schedule_enabled)
+        self.schedule_start = QTimeEdit(_qtime(settings.schedule_start, "23:00"))
+        self.schedule_start.setDisplayFormat("HH:mm")
+        form.addRow("Start downloading at:", self.schedule_start)
+        self.schedule_stop = QTimeEdit(_qtime(settings.schedule_stop, "07:00"))
+        self.schedule_stop.setDisplayFormat("HH:mm")
+        form.addRow("Stop downloading at:", self.schedule_stop)
+        days_row = QHBoxLayout()
+        self.schedule_days: list[QCheckBox] = []
+        for i, name in enumerate(DAY_NAMES):
+            cb = QCheckBox(name)
+            cb.setChecked(i in settings.schedule_days)
+            self.schedule_days.append(cb)
+            days_row.addWidget(cb)
+        days_row.addStretch(1)
+        form.addRow("On:", days_row)
+        sched_note = QLabel(
+            "A stop time earlier than the start time runs past midnight (23:00 to 07:00). "
+            "Downloads running when the window closes are paused and continue automatically when it "
+            "opens again; paused downloads are never started by the scheduler. Combine with "
+            "'When done' in the status bar to shut down afterwards."
+        )
+        sched_note.setObjectName("muted")
+        sched_note.setWordWrap(True)
+        form.addRow("", sched_note)
+        for w in (self.schedule_start, self.schedule_stop, *self.schedule_days):
+            w.setEnabled(settings.schedule_enabled)
+            self.schedule_enabled.toggled.connect(w.setEnabled)
+        tabs.addTab(sched, "Scheduler")
 
         # --- Video
         video = QWidget()
@@ -147,6 +208,55 @@ class SettingsDialog(QDialog):
             get_btn.clicked.connect(self._download_ffmpeg)
             form.addRow("", get_btn)
         tabs.addTab(video, "Video")
+
+        # --- Torrents
+        torrents = QWidget()
+        form = QFormLayout(torrents)
+        self.torrent_port = QSpinBox()
+        self.torrent_port.setRange(0, 65535)
+        self.torrent_port.setSpecialValueText("Random")
+        self.torrent_port.setValue(settings.torrent_port)
+        self.torrent_port.setToolTip("Port for incoming peer connections; UPnP / NAT-PMP mapping is attempted")
+        form.addRow("Listening port:", self.torrent_port)
+
+        self.torrent_seed = QCheckBox("Keep seeding finished torrents while IDM Clone is running")
+        self.torrent_seed.setChecked(settings.torrent_seed)
+        form.addRow("", self.torrent_seed)
+
+        self.torrent_upload = QSpinBox()
+        self.torrent_upload.setRange(0, 1_000_000)
+        self.torrent_upload.setSuffix(" KB/s")
+        self.torrent_upload.setSpecialValueText("Unlimited")
+        self.torrent_upload.setValue(settings.torrent_upload_limit_kb)
+        form.addRow("Upload limit:", self.torrent_upload)
+
+        self.torrent_conns = QSpinBox()
+        self.torrent_conns.setRange(10, 2000)
+        self.torrent_conns.setValue(settings.torrent_max_connections)
+        form.addRow("Max peer connections:", self.torrent_conns)
+
+        self.trackers = QPlainTextEdit()
+        self.trackers.setPlaceholderText("udp://tracker.example.org:1337/announce")
+        self.trackers.setPlainText("\n".join(settings.torrent_trackers))
+        self.trackers.setFixedHeight(96)
+        self.trackers.setToolTip("Added to every magnet link so bare magnets find peers faster (DHT is always on)")
+        form.addRow("Extra trackers:", self.trackers)
+
+        from . import protocols
+
+        self.handle_magnets = QCheckBox(
+            "Open magnet links and .torrent files from the browser and Explorer with IDM Clone"
+        )
+        self.handle_magnets.setChecked(protocols.is_registered() or settings.handle_magnet_links)
+        form.addRow("", self.handle_magnets)
+        note = QLabel(
+            "Torrents are saved into the 'Torrents' sub-folder when category sorting is on. "
+            "The download speed limit on the Connection tab applies per torrent too."
+        )
+        note.setObjectName("muted")
+        note.setWordWrap(True)
+        form.addRow("", note)
+        tabs.addTab(torrents, "Torrents")
 
         # --- Browser
         browser = QWidget()
@@ -191,6 +301,12 @@ class SettingsDialog(QDialog):
         root.addWidget(tabs)
         root.addWidget(buttons)
 
+    def _forget_login(self) -> None:
+        for item in self.logins.selectedItems():
+            if self._manager is not None:
+                self._manager.forget_credential(item.text())
+            self.logins.takeItem(self.logins.row(item))
+
     def _browse(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Download folder", self.dir_edit.text())
         if folder:
@@ -227,6 +343,13 @@ class SettingsDialog(QDialog):
             download_dir=self.dir_edit.text().strip() or self._original.download_dir,
             use_categories=self.use_categories.isChecked(),
             watch_clipboard=self.watch_clipboard.isChecked(),
+            watch_clipboard_sites=self.watch_sites.isChecked(),
+            torrent_port=self.torrent_port.value(),
+            torrent_seed=self.torrent_seed.isChecked(),
+            torrent_upload_limit_kb=self.torrent_upload.value(),
+            torrent_max_connections=self.torrent_conns.value(),
+            torrent_trackers=[ln.strip() for ln in self.trackers.toPlainText().splitlines() if ln.strip()],
+            handle_magnet_links=self.handle_magnets.isChecked(),
             connections_per_download=self.connections.value(),
             max_concurrent_downloads=self.concurrent.value(),
             max_retries=self.retries.value(),
@@ -242,4 +365,8 @@ class SettingsDialog(QDialog):
             start_with_windows=self.start_with_windows.isChecked(),
             start_minimized=self.start_minimized.isChecked(),
             check_updates=self.check_updates.isChecked(),
+            schedule_enabled=self.schedule_enabled.isChecked(),
+            schedule_start=self.schedule_start.time().toString("HH:mm"),
+            schedule_stop=self.schedule_stop.time().toString("HH:mm"),
+            schedule_days=[i for i, cb in enumerate(self.schedule_days) if cb.isChecked()],
         )

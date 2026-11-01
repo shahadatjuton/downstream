@@ -139,3 +139,36 @@
     );
   }
 })();
+
+
+// ---------------------------------------------------------------- magnet links
+// Clicking a magnet: link sends it to IDM Clone instead of asking the browser which torrent
+// client to open (the toggle lives in the extension popup).
+(() => {
+  if (window.__idmCloneMagnets) return;
+  window.__idmCloneMagnets = true;
+  let enabled = true;
+  chrome.storage.local.get({ magnets: true }, (d) => { enabled = d.magnets !== false; });
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.magnets) enabled = changes.magnets.newValue !== false;
+  });
+  document.addEventListener("click", (e) => {
+    if (!enabled || e.button !== 0 || e.defaultPrevented) return;
+    const a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a) return;
+    const href = a.getAttribute("href") || "";
+    if (!/^magnet:/i.test(href)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      chrome.runtime.sendMessage({ type: "magnet", url: href, pageUrl: location.href }, (resp) => {
+        if (chrome.runtime.lastError || !resp || !resp.ok) {
+          // The app is not reachable: fall back to whatever the browser would have done.
+          if (!resp || resp.error !== "disabled") location.href = href;
+        }
+      });
+    } catch (_e) {
+      location.href = href;
+    }
+  }, true);
+})();

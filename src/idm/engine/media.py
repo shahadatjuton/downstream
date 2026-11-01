@@ -28,6 +28,8 @@ class MediaFormat:
     audio_only: bool = False
     needs_ffmpeg: bool = False
     client: str = ""  # yt-dlp player client that exposes this format ("" = default)
+    postprocess: str = ""  # "mp3": convert the audio with ffmpeg after download
+    thumbnail: bool = False  # not a stream: save the page's thumbnail image instead
 
 
 @dataclass
@@ -42,6 +44,43 @@ class MediaInfo:
     @property
     def filename_base(self) -> str:
         return sanitize_filename(self.title)[:120] or "video"
+
+    @property
+    def thumbnail_ext(self) -> str:
+        return thumbnail_ext(self.thumbnail or "")
+
+
+def thumbnail_ext(url: str) -> str:
+    path = url.split("?")[0].split("#")[0].lower()
+    for ext in ("jpg", "jpeg", "png", "webp", "gif"):
+        if path.endswith("." + ext):
+            return "jpg" if ext == "jpeg" else ext
+    return "jpg"
+
+
+VIDEO_SITE_HOSTS = (
+    "youtube.com/",
+    "youtu.be/",
+    "vimeo.com/",
+    "twitch.tv/",
+    "dailymotion.com/",
+    "facebook.com/",
+    "fb.watch/",
+    "instagram.com/",
+    "tiktok.com/",
+    "twitter.com/",
+    "x.com/",
+    "reddit.com/",
+    "soundcloud.com/",
+    "bilibili.com/",
+    "ok.ru/",
+    "vk.com/",
+)
+
+
+def is_video_site(url: str) -> bool:
+    lowered = url.lower()
+    return any(h in lowered for h in VIDEO_SITE_HOSTS)
 
 
 FFMPEG_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
@@ -95,8 +134,7 @@ def looks_like_media_page(url: str, content_type: str) -> bool:
     ct = (content_type or "").split(";")[0].strip().lower()
     if ct in ("text/html", "application/xhtml+xml"):
         return True
-    lowered = url.lower()
-    return any(h in lowered for h in ("youtube.com/", "youtu.be/", "vimeo.com/", "twitch.tv/", "dailymotion.com/"))
+    return is_video_site(url)
 
 
 def _client_args(client: str) -> dict:
@@ -155,6 +193,12 @@ def extract_media(
         media.formats = [MediaFormat(selector="best", label="Default", ext=info.get("ext") or "mp4")]
     if not media.formats:
         raise MediaError("no downloadable formats found")
+    if media.thumbnail:
+        media.formats.append(
+            MediaFormat(
+                "__thumbnail__", f"Thumbnail image only · {media.thumbnail_ext}", media.thumbnail_ext, thumbnail=True
+            )
+        )
     return media
 
 
@@ -197,7 +241,10 @@ def build_format_choices(formats: list[dict], ffmpeg: bool) -> list[MediaFormat]
         for f in formats
         if f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none") and f.get("url")
     ]
-    progressive.sort(key=lambda f: (f.get("height") or 0, f.get("tbr") or 0), reverse=True)
+    ext_rank = {"mp4": 0, "webm": 1, "3gp": 2, "flv": 3}
+    progressive.sort(
+        key=lambda f: (f.get("height") or 0, -ext_rank.get(f.get("ext") or "", 9), f.get("tbr") or 0), reverse=True
+    )
 
     if ffmpeg and heights:
         choices.append(
@@ -221,12 +268,13 @@ def build_format_choices(formats: list[dict], ffmpeg: bool) -> list[MediaFormat]
                     needs_ffmpeg=True,
                 )
             )
-    seen_heights: set[int] = set()
+    seen: set[tuple[int, str]] = set()
     for f in progressive:
         h = f.get("height") or 0
-        if h in seen_heights:
+        key = (h, f.get("ext") or "mp4")
+        if key in seen:
             continue
-        seen_heights.add(h)
+        seen.add(key)
         size = f.get("filesize") or f.get("filesize_approx")
         parts = [f"{h}p" if h else (f.get("format_note") or f.get("format_id") or "video")]
         parts.append(f.get("ext") or "mp4")
@@ -241,6 +289,17 @@ def build_format_choices(formats: list[dict], ffmpeg: bool) -> list[MediaFormat]
         ext = best_audio.get("ext") or "m4a"
         label = "Audio only" + (f" · {ext}" if ext else "") + (f" · {_fmt_size(size)}" if size else "")
         choices.append(MediaFormat(f"bestaudio[ext={ext}]/bestaudio", label, ext, filesize=size, audio_only=True))
+        if ffmpeg and ext != "mp3":
+            choices.append(
+                MediaFormat(
+                    "bestaudio/best",
+                    "Audio only · mp3 (converted with ffmpeg)",
+                    "mp3",
+                    audio_only=True,
+                    needs_ffmpeg=True,
+                    postprocess="mp3",
+                )
+            )
     return choices
 
 
@@ -324,7 +383,11 @@ class MediaRunner:
         opts.update(_client_args(task.media_client))
         if self.ffmpeg:
             opts["ffmpeg_location"] = self.ffmpeg
-            if not task.media_format or "+" in task.media_format or task.media_format.startswith("best"):
+            if task.media_postprocess == "mp3":
+                opts["postprocessors"] = [
+                    {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "0"}
+                ]
+            elif not task.media_format or "+" in task.media_format or task.media_format.startswith("best"):
                 opts["merge_output_format"] = "mp4"
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:

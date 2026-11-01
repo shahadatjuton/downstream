@@ -29,6 +29,17 @@ DEFAULT_CATEGORIES: dict[str, list[str]] = {
 }
 
 
+DEFAULT_TRACKERS: list[str] = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://tracker.openbittorrent.com:6969/announce",
+]
+
+TORRENT_FOLDER = "Torrents"
+
+
 @dataclass
 class Settings:
     download_dir: str = field(default_factory=default_download_dir)
@@ -54,6 +65,19 @@ class Settings:
     check_updates: bool = True  # ask GitHub for a newer release once per start
     first_run_done: bool = False  # the welcome / browser-setup window has been shown
     extension_seen: bool = False  # the browser extension has talked to this app at least once
+    watch_clipboard_sites: bool = True  # clipboard watcher also reacts to video pages, magnets and MEGA links
+    # --- torrents
+    torrent_port: int = 6881  # incoming peer connections (UPnP/NAT-PMP mapping is attempted)
+    torrent_seed: bool = False  # keep sharing finished torrents while the app runs
+    torrent_upload_limit_kb: int = 0  # 0 = unlimited
+    torrent_max_connections: int = 200
+    torrent_trackers: list[str] = field(default_factory=lambda: list(DEFAULT_TRACKERS))
+    handle_magnet_links: bool = False  # register as the Windows handler for magnet: links
+    # --- scheduler: queued downloads only run inside this daily window (see engine/schedule.py)
+    schedule_enabled: bool = False
+    schedule_start: str = "23:00"  # HH:MM, local time
+    schedule_stop: str = "07:00"  # HH:MM; <= start means the window runs past midnight
+    schedule_days: list[int] = field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])  # Monday = 0
 
     @classmethod
     def path(cls) -> Path:
@@ -87,4 +111,11 @@ class Settings:
             cat = self.category_for(filename)
             if cat:
                 return str(Path(self.download_dir) / cat)
+        return self.download_dir
+
+    def torrent_dest_dir(self, override: str | None = None) -> str:
+        if override:
+            return override
+        if self.use_categories:
+            return str(Path(self.download_dir) / TORRENT_FOLDER)
         return self.download_dir

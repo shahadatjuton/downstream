@@ -47,6 +47,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"
 Name: "startup"; Description: "Start {#AppName} when I sign in to Windows (minimised to the tray)"; GroupDescription: "Startup:"; Flags: unchecked
 Name: "browser"; Description: "Register the browser extension host for Chrome, Edge and Brave"; GroupDescription: "Browser integration:"
+Name: "magnet"; Description: "Open magnet links and .torrent files with {#AppName}"; GroupDescription: "Torrents:"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -68,6 +69,15 @@ Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\{#HostName}"; V
 Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
 Root: HKCU; Subkey: "Software\Chromium\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
 Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\{#HostName}"; ValueType: string; ValueData: "{app}\host\{#HostName}.json"; Flags: uninsdeletekey; Tasks: browser
+; magnet: protocol and .torrent file association (per user)
+Root: HKCU; Subkey: "Software\Classes\magnet"; ValueType: string; ValueData: "URL:Magnet link"; Flags: uninsdeletekey; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\magnet"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\magnet\DefaultIcon"; ValueType: string; ValueData: """{app}\{#AppExe}"",0"; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\magnet\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\IDMClone.Torrent"; ValueType: string; ValueData: "BitTorrent file"; Flags: uninsdeletekey; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\IDMClone.Torrent\DefaultIcon"; ValueType: string; ValueData: """{app}\{#AppExe}"",0"; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\IDMClone.Torrent\shell\open\command"; ValueType: string; ValueData: """{app}\{#AppExe}"" ""%1"""; Tasks: magnet
+Root: HKCU; Subkey: "Software\Classes\.torrent"; ValueType: string; ValueData: "IDMClone.Torrent"; Flags: uninsdeletevalue; Tasks: magnet
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent

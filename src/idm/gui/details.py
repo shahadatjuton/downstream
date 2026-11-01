@@ -287,14 +287,30 @@ class DetailsPane(QFrame):
             parts.append("resumable" if t.resumable else "will restart from the beginning")
         elif t.status == Status.QUEUED:
             parts.append("waiting in queue")
+        if t.speed_limit:
+            parts.append(f"limit {fmt_speed(t.speed_limit)}")
         if t.kind == "media" and t.title:
             parts.append(t.title)
+        if t.kind == "torrent":
+            if t.status == Status.DOWNLOADING:
+                parts.append(f"{t.seeds} seeds · {t.peers} peers")
+            if t.upload_speed:
+                parts.append("↑ " + fmt_speed(t.upload_speed))
+            if t.note and t.status != Status.DOWNLOADING:
+                parts.append(t.note)
+        elif t.kind == "mega":
+            parts.append("MEGA · decrypted while downloading")
         self.summary.setText("  ·  ".join(parts))
-        self.url.setText(_elide(t.url, 110))
-        self.url.setToolTip(t.url)
+        shown_url = t.origin or t.url
+        self.url.setText(_elide(shown_url, 110))
+        self.url.setToolTip(shown_url)
         self.path.setText(str(t.final_path if t.status == Status.COMPLETED else t.dest_dir))
         active = sum(1 for s in t.segments if not s.done)
-        if t.status == Status.DOWNLOADING:
+        if t.kind == "torrent":
+            self.segments_label.setText(
+                f"{len(t.segments)} piece runs" if t.status == Status.DOWNLOADING and t.segments else ""
+            )
+        elif t.status == Status.DOWNLOADING:
             self.segments_label.setText(f"{active} active / {len(t.segments)} total · {t.connections} max")
         else:
             self.segments_label.setText(f"{len(t.segments)} segments" if t.segments else "")
@@ -307,7 +323,7 @@ class DetailsPane(QFrame):
         self.btn_toggle.setText("Pause" if running else ("Retry" if t.status == Status.ERROR else "Resume"))
         self.btn_toggle.setIcon(icon("pause" if running else "play", self.theme.text, 16))
         self.btn_toggle.setVisible(t.status != Status.COMPLETED)
-        self.btn_open.setText("Open" if t.status == Status.COMPLETED else "Open folder")
+        self.btn_open.setText("Open" if t.status == Status.COMPLETED and t.kind != "torrent" else "Open folder")
         self.btn_folder.setVisible(t.status == Status.COMPLETED)
         self.segments.update()
 

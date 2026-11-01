@@ -11,10 +11,10 @@ from ..engine import DownloadManager, DownloadTask, Settings, Status
 from .details import paint_segment_map
 from .icons import CATEGORY_ICONS, icon
 from .theme import Theme
-from .util import fmt_bytes, fmt_eta, fmt_speed, fmt_time
+from .util import fmt_bytes, fmt_eta, fmt_speed, fmt_time, short_error
 
-COLUMNS = ["File name", "Size", "Progress", "Speed", "Time left", "Added"]
-COL_NAME, COL_SIZE, COL_STATUS, COL_SPEED, COL_ETA, COL_ADDED = range(6)
+COLUMNS = ["File name", "Size", "Status", "Progress", "Speed", "Time left", "Description", "Added"]
+COL_NAME, COL_SIZE, COL_STATUS, COL_PROGRESS, COL_SPEED, COL_ETA, COL_DESC, COL_ADDED = range(8)
 ROW_HEIGHT = 44
 
 TaskRole = Qt.ItemDataRole.UserRole + 1
@@ -30,12 +30,35 @@ STATUS_LABEL = {
 STATUS_ORDER = {Status.DOWNLOADING: 0, Status.QUEUED: 1, Status.PAUSED: 2, Status.ERROR: 3, Status.COMPLETED: 4}
 
 
+def status_text(task: DownloadTask) -> str:
+    """Short, sortable status for the Status column: 'Downloading', 'Error · HTTP 403', ..."""
+    label = STATUS_LABEL[task.status]
+    if task.status == Status.ERROR and task.error:
+        return f"{label} · {short_error(task.error)}"
+    if task.status == Status.DOWNLOADING and task.note:
+        return f"{label} · {task.note}"
+    return label
+
+
+def description_text(task: DownloadTask) -> str:
+    """Description column: the page/video title when known, else the site the file comes from."""
+    if task.title and task.title != task.filename:
+        return task.title
+    if task.kind == "torrent":
+        return "Torrent"
+    from urllib.parse import urlparse
+
+    host = urlparse(task.origin or task.url).hostname or ""
+    return host[4:] if host.startswith("www.") else host
+
+
 class TaskFilter:
     """Which tasks the main list shows. `name` is a category name or one of the pseudo-filters."""
 
     ALL = "All downloads"
     ACTIVE = "Unfinished"
     DONE = "Finished"
+    TORRENTS = "Torrents"
     PSEUDO = (ALL, ACTIVE, DONE)
 
     def __init__(self, name: str = ALL) -> None:
@@ -48,12 +71,20 @@ class TaskFilter:
             return task.status != Status.COMPLETED
         if self.name == self.DONE:
             return task.status == Status.COMPLETED
+        if self.name == self.TORRENTS:
+            return task.kind == "torrent"
+        if task.kind == "torrent":
+            return False  # a torrent's folder name has no extension; keep it out of "Documents" etc.
         return settings.category_for(task.filename) == self.name
 
 
 def icon_name_for(task: DownloadTask, settings: Settings) -> str:
     if task.kind == "media":
         return "video"
+    if task.kind == "torrent":
+        return "torrent"
+    if task.kind == "mega":
+        return "cloud"
     cat = settings.category_for(task.filename)
     return CATEGORY_ICONS.get(cat or "", "file")
 
@@ -77,7 +108,7 @@ class TaskTableModel(QAbstractTableModel):
             return
         self._tasks = tasks
         if tasks:
-            self.dataChanged.emit(self.index(0, COL_NAME), self.index(len(tasks) - 1, COL_ETA), [])
+            self.dataChanged.emit(self.index(0, COL_NAME), self.index(len(tasks) - 1, COL_DESC), [])
 
     def set_filter(self, flt: TaskFilter) -> None:
         self.filter = flt
@@ -123,8 +154,10 @@ class TaskTableModel(QAbstractTableModel):
                 return task.filename.lower()
             if col == COL_SIZE:
                 return task.size or 0
-            if col == COL_STATUS:
+            if col in (COL_STATUS, COL_PROGRESS):
                 return STATUS_ORDER[task.status] * 1000 - int((task.progress or 0) * 999)
+            if col == COL_DESC:
+                return description_text(task).lower()
             if col == COL_SPEED:
                 return task.speed
             if col == COL_ETA:
@@ -137,7 +170,11 @@ class TaskTableModel(QAbstractTableModel):
             if col == COL_SIZE:
                 return fmt_bytes(task.size) if task.size else "—"
             if col == COL_STATUS:
-                return STATUS_LABEL[task.status]
+                return status_text(task)
+            if col == COL_PROGRESS:
+                return STATUS_LABEL[task.status]  # painted by ProgressDelegate; text for accessibility
+            if col == COL_DESC:
+                return description_text(task)
             if col == COL_SPEED:
                 return fmt_speed(task.speed) if task.status == Status.DOWNLOADING else ""
             if col == COL_ETA:
@@ -148,7 +185,7 @@ class TaskTableModel(QAbstractTableModel):
             color = self.theme.danger if task.status == Status.ERROR else self.theme.muted
             return icon(icon_name_for(task, self.manager.settings), color, 20)
         if role == Qt.ItemDataRole.ToolTipRole:
-            lines = [task.filename, task.url, f"Saved to: {task.dest_dir}"]
+            lines = [task.filename, task.origin or task.url, f"Saved to: {task.dest_dir}"]
             if task.error:
                 lines.append(f"Error: {task.error}")
             return "\n".join(lines)
@@ -157,7 +194,9 @@ class TaskTableModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole:
             if task.status == Status.ERROR:
                 return self.theme.danger
-            if col in (COL_SIZE, COL_SPEED, COL_ETA, COL_ADDED):
+            if col == COL_STATUS and task.status != Status.QUEUED:
+                return self.theme.status_color(task.status)
+            if col in (COL_SIZE, COL_SPEED, COL_ETA, COL_ADDED, COL_DESC):
                 return self.theme.muted
         if role == Qt.ItemDataRole.SizeHintRole:
             return QSize(0, ROW_HEIGHT)
@@ -202,9 +241,10 @@ class TaskProxyModel(QSortFilterProxyModel):
 class ProgressDelegate(QStyledItemDelegate):
     """Progress column: status text on top, segment map bar underneath."""
 
-    def __init__(self, theme: Theme, parent=None) -> None:
+    def __init__(self, theme: Theme, parent=None, manager: DownloadManager | None = None) -> None:
         super().__init__(parent)
         self.theme = theme
+        self.manager = manager
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:  # noqa: N802
         return QSize(200, ROW_HEIGHT)
@@ -236,6 +276,12 @@ class ProgressDelegate(QStyledItemDelegate):
             left = f"{task.progress * 100:.1f}%  ·  {left}"
         elif task.status == Status.DOWNLOADING:
             left = f"{fmt_bytes(task.downloaded)}  ·  {left}"
+        if task.note and task.status in (Status.DOWNLOADING, Status.COMPLETED):
+            left = f"{left} · {task.note}"
+        if task.status == Status.QUEUED and self.manager is not None:
+            sched = self.manager.schedule_note()
+            if sched.startswith("starts"):
+                left = f"{left} · scheduler {sched}"
         painter.setPen(color)
         painter.drawText(
             QRectF(rect.x(), rect.y(), rect.width(), text_h),
