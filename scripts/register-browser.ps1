@@ -1,9 +1,12 @@
 # Registers the IDM Clone native messaging host for Chrome, Edge, Brave and Firefox so the browser
 # extension can talk to the desktop app. Run again after moving the app.
 #
-#   powershell -ExecutionPolicy Bypass -File scripts\register-browser.ps1            # packaged app (after install.ps1 / build-exe.ps1)
-#   powershell -ExecutionPolicy Bypass -File scripts\register-browser.ps1 -Dev       # run from this source tree with the venv
-#   powershell -ExecutionPolicy Bypass -File scripts\register-browser.ps1 -Unregister
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1            # packaged app (after install.ps1 / build-exe.ps1)
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1 -Dev       # run from this source tree with the venv
+#   powershell -ExecutionPolicy Bypass -File scripts
+egister-browser.ps1 -Unregister
 param([switch]$Dev, [switch]$Unregister)
 
 $ErrorActionPreference = "Stop"
