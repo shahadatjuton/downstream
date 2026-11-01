@@ -40,6 +40,25 @@ def status_text(task: DownloadTask) -> str:
     return label
 
 
+def progress_text(task: DownloadTask, schedule_note: str = "") -> str:
+    """Top line of the Progress cell. Complements the Status column instead of repeating it:
+    '55.6%  ·  3.1 GB of 5.5 GB' while downloading, 'Paused  ·  42.5%', 'Error · HTTP 403'."""
+    if task.status == Status.ERROR:
+        return f"Error · {short_error(task.error) or 'unknown'}"
+    if task.status == Status.COMPLETED:
+        return "Complete"
+    pct = f"{task.progress * 100:.1f}%" if task.progress is not None else ""
+    if task.status == Status.DOWNLOADING:
+        if task.size:
+            return f"{pct}  ·  {fmt_bytes(task.downloaded)} of {fmt_bytes(task.size)}"
+        return f"{fmt_bytes(task.downloaded)} received"
+    if task.status == Status.PAUSED:
+        return f"Paused  ·  {pct}" if pct and task.downloaded else "Paused"
+    if schedule_note.startswith("starts"):
+        return f"Queued · scheduler {schedule_note}"
+    return "Queued"
+
+
 def description_text(task: DownloadTask) -> str:
     """Description column: the page/video title when known, else the site the file comes from."""
     if task.title and task.title != task.filename:
@@ -271,19 +290,8 @@ class ProgressDelegate(QStyledItemDelegate):
         fm = QFontMetrics(font)
         text_h = fm.height()
         color = t.status_color(task.status) if task.status != Status.QUEUED else t.muted
-        left = STATUS_LABEL[task.status]
-        if task.status == Status.ERROR:
-            left = f"Error · {task.error or 'unknown'}"
-        elif task.progress is not None and task.status != Status.COMPLETED:
-            left = f"{task.progress * 100:.1f}%  ·  {left}"
-        elif task.status == Status.DOWNLOADING:
-            left = f"{fmt_bytes(task.downloaded)}  ·  {left}"
-        if task.note and task.status in (Status.DOWNLOADING, Status.COMPLETED):
-            left = f"{left} · {task.note}"
-        if task.status == Status.QUEUED and self.manager is not None:
-            sched = self.manager.schedule_note()
-            if sched.startswith("starts"):
-                left = f"{left} · scheduler {sched}"
+        sched = self.manager.schedule_note() if (task.status == Status.QUEUED and self.manager is not None) else ""
+        left = progress_text(task, sched)
         painter.setPen(color)
         painter.drawText(
             QRectF(rect.x(), rect.y(), rect.width(), text_h),

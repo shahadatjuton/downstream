@@ -5,6 +5,35 @@ and the project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-01
+
+### Changed
+- **Download list**: the file name column is no longer squeezed to a few characters; it takes
+  the space that is left after narrower default widths for the other columns, and every cell
+  stays on one line (long names elide instead of wrapping). The Progress cell now complements
+  the Status column instead of repeating it: "55.6% · 3.1 GB of 5.5 GB" while downloading,
+  "Paused · 42.5%", "Error · HTTP 403".
+- **Columns are yours**: right-click the header to show or hide columns, drag them into another
+  order, or reset the layout.
+- **Layout is remembered**: window size and position, sidebar width, column widths, order and
+  sort, and whether the details pane is open survive a restart (stored in `ui.ini` in the data
+  folder, so portable installs carry it along).
+- **Details pane**: long URLs and paths elide in the middle instead of forcing the window wider
+  than the link; the full text is in the tooltip and "Copy link".
+- **Settings**: numeric fields and the appearance picker are compact instead of stretching across
+  the dialog; the clipboard sub-option is indented and greys out when the clipboard watcher is
+  off; time fields and the saved-logins list match the other inputs.
+- Header hover highlight, focus ring on combo boxes, and muted disabled inputs in both themes.
+- The window has a sensible minimum size (860 × 540) and opens at 1280 × 780 on first run.
+
+### Fixed
+- Links in the app, installer and README pointed at a GitHub repository that does not exist;
+  "Check for updates" and the in-app installer download now use the real one.
+- `register-browser.ps1` and `build-exe.ps1` had their usage comments corrupted by a stray
+  control character, and `build-installer.ps1` did not parse at all (escaped quotes in the
+  version lookup), so no installer could be built from it. The Inno Setup script itself failed
+  to compile under Inno Setup 6 (`LoadStringFromFile` needs an `AnsiString`).
+
 ## [0.4.0] - 2026-11-01
 
 ### Added
@@ -62,6 +91,7 @@ and the project uses [Semantic Versioning](https://semver.org/).
   Chrome/Edge/Brave extension, yt-dlp video downloads with quality picker, categories, clipboard
   watcher, light and dark themes, tray icon, installer and portable build.
 
-[Unreleased]: https://github.com/shahadatjuton/idm-clone/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/shahadatjuton/idm-clone/compare/v0.2.0...v0.4.0
-[0.2.0]: https://github.com/shahadatjuton/idm-clone/releases/tag/v0.2.0
+[Unreleased]: https://github.com/shahadatjuton/downstream/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/shahadatjuton/downstream/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/shahadatjuton/downstream/compare/v0.2.0...v0.4.0
+[0.2.0]: https://github.com/shahadatjuton/downstream/releases/tag/v0.2.0

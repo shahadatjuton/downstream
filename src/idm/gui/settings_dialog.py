@@ -40,7 +40,8 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent: QWidget | None = None, manager=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(640)
+        self.resize(680, 560)
         self._original = settings
         self._manager = manager
 
@@ -65,8 +66,11 @@ class SettingsDialog(QDialog):
         self.watch_clipboard.setChecked(settings.watch_clipboard)
         form.addRow("", self.watch_clipboard)
 
-        self.watch_sites = QCheckBox("…including video pages (YouTube, Facebook, TikTok, …), magnet and MEGA links")
+        self.watch_sites = QCheckBox("…including video pages, magnet and MEGA links")
         self.watch_sites.setChecked(settings.watch_clipboard_sites)
+        self.watch_sites.setStyleSheet("margin-left: 26px")
+        self.watch_sites.setEnabled(settings.watch_clipboard)
+        self.watch_clipboard.toggled.connect(self.watch_sites.setEnabled)
         form.addRow("", self.watch_sites)
 
         self.show_complete = QCheckBox("Show a 'Download complete' popup with Open / Open folder buttons")
@@ -82,6 +86,7 @@ class SettingsDialog(QDialog):
         self.history_limit.setSpecialValueText("Keep all")
         self.history_limit.setSuffix(" most recent")
         self.history_limit.setValue(settings.history_limit)
+        self.history_limit.setFixedWidth(160)
         self.history_limit.setToolTip("Older finished downloads leave the list automatically; the files stay")
         form.addRow("Finished downloads kept:", self.history_limit)
 
@@ -112,6 +117,7 @@ class SettingsDialog(QDialog):
         for label, value in (("Follow Windows", "auto"), ("Light", "light"), ("Dark", "dark")):
             self.theme_box.addItem(label, value)
         self.theme_box.setCurrentIndex(max(0, self.theme_box.findData(settings.theme)))
+        self.theme_box.setFixedWidth(200)
         form.addRow("Appearance:", self.theme_box)
         tabs.addTab(general, "General")
 
@@ -121,16 +127,19 @@ class SettingsDialog(QDialog):
         self.connections = QSpinBox()
         self.connections.setRange(1, 32)
         self.connections.setValue(settings.connections_per_download)
+        self.connections.setFixedWidth(160)
         form.addRow("Connections per download:", self.connections)
 
         self.concurrent = QSpinBox()
         self.concurrent.setRange(1, 20)
         self.concurrent.setValue(settings.max_concurrent_downloads)
+        self.concurrent.setFixedWidth(160)
         form.addRow("Simultaneous downloads:", self.concurrent)
 
         self.retries = QSpinBox()
         self.retries.setRange(0, 50)
         self.retries.setValue(settings.max_retries)
+        self.retries.setFixedWidth(160)
         form.addRow("Retries per segment:", self.retries)
 
         self.speed_limit = QSpinBox()
@@ -138,6 +147,7 @@ class SettingsDialog(QDialog):
         self.speed_limit.setSuffix(" KB/s")
         self.speed_limit.setSpecialValueText("Unlimited")
         self.speed_limit.setValue(settings.speed_limit_bytes // 1024)
+        self.speed_limit.setFixedWidth(160)
         form.addRow("Speed limit per download:", self.speed_limit)
 
         self.proxy = QLineEdit(settings.proxy)
@@ -148,6 +158,7 @@ class SettingsDialog(QDialog):
         form.addRow("User-Agent:", self.user_agent)
 
         self.logins = QListWidget()
+        self.logins.setObjectName("plain")
         self.logins.setFixedHeight(84)
         self.logins.setToolTip("Sites you logged in to from the Add dialog; passwords are stored encrypted")
         if manager is not None:
@@ -169,9 +180,11 @@ class SettingsDialog(QDialog):
         form.addRow("", self.schedule_enabled)
         self.schedule_start = QTimeEdit(_qtime(settings.schedule_start, "23:00"))
         self.schedule_start.setDisplayFormat("HH:mm")
+        self.schedule_start.setFixedWidth(100)
         form.addRow("Start downloading at:", self.schedule_start)
         self.schedule_stop = QTimeEdit(_qtime(settings.schedule_stop, "07:00"))
         self.schedule_stop.setDisplayFormat("HH:mm")
+        self.schedule_stop.setFixedWidth(100)
         form.addRow("Stop downloading at:", self.schedule_stop)
         days_row = QHBoxLayout()
         self.schedule_days: list[QCheckBox] = []
@@ -256,6 +269,7 @@ class SettingsDialog(QDialog):
         self.torrent_port.setRange(0, 65535)
         self.torrent_port.setSpecialValueText("Random")
         self.torrent_port.setValue(settings.torrent_port)
+        self.torrent_port.setFixedWidth(160)
         self.torrent_port.setToolTip("Port for incoming peer connections; UPnP / NAT-PMP mapping is attempted")
         form.addRow("Listening port:", self.torrent_port)
 
@@ -268,11 +282,13 @@ class SettingsDialog(QDialog):
         self.torrent_upload.setSuffix(" KB/s")
         self.torrent_upload.setSpecialValueText("Unlimited")
         self.torrent_upload.setValue(settings.torrent_upload_limit_kb)
+        self.torrent_upload.setFixedWidth(160)
         form.addRow("Upload limit:", self.torrent_upload)
 
         self.torrent_conns = QSpinBox()
         self.torrent_conns.setRange(10, 2000)
         self.torrent_conns.setValue(settings.torrent_max_connections)
+        self.torrent_conns.setFixedWidth(160)
         form.addRow("Max peer connections:", self.torrent_conns)
 
         self.trackers = QPlainTextEdit()

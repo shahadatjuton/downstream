@@ -30,7 +30,7 @@ from ..engine import DownloadManager
 from .icons import icon
 from .theme import Theme
 
-REPO = "shahadatjuton/idm-clone"
+REPO = "shahadatjuton/downstream"
 REPO_URL = f"https://github.com/{REPO}"
 RELEASES_URL = f"{REPO_URL}/releases/latest"
 ISSUES_URL = f"{REPO_URL}/issues/new/choose"

@@ -25,6 +25,30 @@ def server():
 
 
 @pytest.fixture
+def app():
+    from PySide6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def window(app, tmp_path: Path):
+    from idm.gui.main_window import MainWindow
+    from idm.gui.theme import apply_theme
+
+    settings = Settings(download_dir=str(tmp_path / "dl"), first_run_done=True, check_updates=False)
+    mgr = DownloadManager(settings, state_path=tmp_path / "state.json")
+    mgr.start()
+    win = MainWindow(mgr, apply_theme(app))
+    win.show()
+    yield win
+    win._timer.stop()
+    mgr.on_event = None
+    mgr.stop()
+    win.close()
+
+
+@pytest.fixture
 def manager(tmp_path: Path):
     settings = Settings(download_dir=str(tmp_path / "dl"), connections_per_download=4, use_categories=False)
     m = DownloadManager(settings, state_path=tmp_path / "state.json")
@@ -136,3 +160,48 @@ def test_add_dialog_marks_duplicates(server, tmp_path):
         dlg.close()
     finally:
         mgr.stop()
+
+
+def test_progress_text_complements_status_column():
+    from idm.engine.download import Segment
+    from idm.gui.models import progress_text
+
+    t = DownloadTask(url="https://example.com/a.bin", filename="a.bin", dest_dir="d", size=1000)
+    t.segments = [Segment(start=0, end=499, downloaded=250), Segment(start=500, end=999, downloaded=0)]
+    assert progress_text(t) == "Queued"
+    assert progress_text(t, "starts 23:00") == "Queued · scheduler starts 23:00"
+    t.status = Status.DOWNLOADING
+    assert progress_text(t) == "25.0%  ·  250 B of 1000 B"
+    t.status = Status.PAUSED
+    assert progress_text(t) == "Paused  ·  25.0%"
+    t.status = Status.ERROR
+    t.error = "ClientResponseError: 403, message='Forbidden'"
+    assert progress_text(t) == "Error · HTTP 403 Forbidden"
+    t.status = Status.COMPLETED
+    assert progress_text(t) == "Complete"
+    unknown = DownloadTask(url="https://example.com/b", filename="b", dest_dir="d", status=Status.DOWNLOADING)
+    unknown.segments = [Segment(start=0, end=-1, downloaded=2048)]
+    assert progress_text(unknown) == "2.0 KB received"
+
+
+def test_column_menu_and_layout_persist(window, tmp_path):
+    from PySide6.QtWidgets import QHeaderView
+
+    from idm.gui.models import COL_ADDED, COL_NAME
+
+    header = window.table.horizontalHeader()
+    assert header.sectionResizeMode(COL_NAME) == QHeaderView.ResizeMode.Stretch
+    assert not window.table.isColumnHidden(COL_ADDED)
+    window._set_column_visible(COL_ADDED, False)
+    window.table.setColumnWidth(COL_DESC, 222)
+    window.splitter.setSizes([160, 900])
+    window._save_ui_state()
+
+    window._reset_columns()
+    assert not window.table.isColumnHidden(COL_ADDED)
+    window._restore_ui_state()
+    assert window.table.isColumnHidden(COL_ADDED)
+    assert window.table.columnWidth(COL_DESC) == 222
+    assert header.sectionResizeMode(COL_NAME) == QHeaderView.ResizeMode.Stretch
+    window._reset_columns()
+    assert not window.table.isColumnHidden(COL_ADDED)

@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from collections import deque
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal, SignalInstance
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent, QPen
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal, SignalInstance
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from ..engine import DownloadTask, Status
@@ -55,6 +55,37 @@ def paint_segment_map(p: QPainter, rect: QRectF, task: DownloadTask, theme: Them
             x = rect.x() + w * (seg.start / size)
             p.drawRect(QRectF(x - 0.5, rect.y(), 1.0, rect.height()))
     p.restore()
+
+
+class ElidedLabel(QLabel):
+    """One-line label that elides in the middle instead of forcing its parent (and the window) wider.
+
+    QLabel's minimum width is the full text; a long URL in the details pane would otherwise make
+    the main window impossible to shrink. The full text stays available as the tooltip.
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full = text
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:  # noqa: N802
+        self._full = text
+        super().setText(text)
+        self.update()
+
+    def text(self) -> str:
+        return self._full
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, super().minimumSizeHint().height())
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        p = QPainter(self)
+        elided = self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideMiddle, self.width())
+        p.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        p.drawText(self.rect(), int(self.alignment() | Qt.AlignmentFlag.AlignVCenter), elided)
+        p.end()
 
 
 class SegmentMap(QWidget):
@@ -160,15 +191,13 @@ class DetailsPane(QFrame):
         self.task: DownloadTask | None = None
         self._graph_task_id: str | None = None
 
-        self.title = QLabel()
+        self.title = ElidedLabel()
         self.title.setObjectName("title")
-        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.summary = QLabel()
+        self.summary = ElidedLabel()
         self.summary.setObjectName("muted")
-        self.url = QLabel()
-        self.url.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.url = ElidedLabel()
         self.url.setObjectName("muted")
-        self.path = QLabel()
+        self.path = ElidedLabel()
         self.path.setObjectName("link")
         self.path.setCursor(Qt.CursorShape.PointingHandCursor)
         self.path.setToolTip("Show in folder")
@@ -306,9 +335,11 @@ class DetailsPane(QFrame):
             parts.append("MEGA · decrypted while downloading")
         self.summary.setText("  ·  ".join(parts))
         shown_url = t.origin or t.url
-        self.url.setText(_elide(shown_url, 110))
+        self.url.setText(shown_url)
         self.url.setToolTip(shown_url)
         self.path.setText(str(t.final_path if t.status == Status.COMPLETED else t.dest_dir))
+        self.path.setToolTip(f"{self.path.text()}\nClick to show in folder")
+        self.title.setToolTip(t.filename)
         active = sum(1 for s in t.segments if not s.done)
         if t.kind == "torrent":
             self.segments_label.setText(
@@ -330,7 +361,3 @@ class DetailsPane(QFrame):
         self.btn_open.setText("Open" if t.status == Status.COMPLETED and t.kind != "torrent" else "Open folder")
         self.btn_folder.setVisible(t.status == Status.COMPLETED)
         self.segments.update()
-
-
-def _elide(text: str, n: int) -> str:
-    return text if len(text) <= n else text[: n - 1] + "…"

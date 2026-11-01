@@ -6,7 +6,7 @@ browser extension that catches downloads and page videos, YouTube / Facebook / I
 TikTok and 1000+ site video, audio and thumbnail downloads through yt-dlp, **BitTorrent**
 (magnet links and .torrent files) and **MEGA** file and folder links.
 
-[![CI](https://github.com/shahadatjuton/idm-clone/actions/workflows/ci.yml/badge.svg)](https://github.com/shahadatjuton/idm-clone/actions/workflows/ci.yml)
+[![CI](https://github.com/shahadatjuton/downstream/actions/workflows/ci.yml/badge.svg)](https://github.com/shahadatjuton/downstream/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)
@@ -63,14 +63,15 @@ TikTok and 1000+ site video, audio and thumbnail downloads through yt-dlp, **Bit
   queue reordering, batch add, clear finished, "Download complete" popup with Open and
   Open folder, "when done" exit / sleep / shut down, and a **scheduler** that runs the queue only
   inside a daily time window (23:00 to 07:00 on chosen weekdays, for example) and pauses whatever
-  is still running when the window closes.
+  is still running when the window closes. Right-click the column header to choose and
+  reorder columns; the window size, sidebar, columns and sort order are remembered.
 - **Pleasant**: light and dark themes that follow Windows, tray icon with notifications,
   clipboard watcher (file links, video pages, magnets and MEGA links), drag-and-drop,
   keyboard shortcuts.
 
 ## Download
 
-Grab the latest build from the [Releases](https://github.com/shahadatjuton/idm-clone/releases/latest) page:
+Grab the latest build from the [Releases](https://github.com/shahadatjuton/downstream/releases/latest) page:
 
 | File | What it is |
 | --- | --- |
@@ -122,7 +123,7 @@ your checkout.
 ## Build from source
 
 ```powershell
-git clone https://github.com/shahadatjuton/idm-clone.git
+git clone https://github.com/shahadatjuton/downstream.git
 cd idm-clone
 python -m venv .venv
 .venv\Scripts\pip install -e .[dev]

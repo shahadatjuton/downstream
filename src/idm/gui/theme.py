@@ -150,6 +150,7 @@ def stylesheet(t: Theme) -> str:
         background: {_c(t.bg)}; color: {_c(t.muted)}; border: none;
         border-bottom: 1px solid {_c(t.border)}; padding: 7px 8px; font-weight: 600; font-size: 9pt;
     }}
+    QHeaderView::section:hover {{ background: {_c(t.hover)}; color: {_c(t.text)}; }}
     QHeaderView {{ background: {_c(t.bg)}; }}
     QTableCornerButton::section {{ background: {_c(t.bg)}; border: none; }}
 
@@ -166,12 +167,18 @@ def stylesheet(t: Theme) -> str:
     QLabel#link {{ color: {_c(t.accent)}; }}
     QFrame#card {{ background: {_c(t.surface)}; border: 1px solid {_c(t.border)}; border-radius: 8px; }}
 
-    QLineEdit, QSpinBox, QPlainTextEdit {{
+    QLineEdit, QSpinBox, QTimeEdit, QPlainTextEdit, QListWidget#plain {{
         border: 1px solid {_c(t.border)}; border-radius: 6px; padding: 6px 8px;
         background: {_c(t.surface)}; selection-background-color: {_c(t.accent)}; selection-color: white;
     }}
-    QLineEdit:focus, QSpinBox:focus, QPlainTextEdit:focus {{ border-color: {_c(t.accent)}; }}
-    QSpinBox::up-button, QSpinBox::down-button {{ width: 16px; border: none; }}
+    QLineEdit:focus, QSpinBox:focus, QTimeEdit:focus, QPlainTextEdit:focus, QComboBox:focus {{
+        border-color: {_c(t.accent)};
+    }}
+    QLineEdit:disabled, QSpinBox:disabled, QTimeEdit:disabled, QComboBox:disabled {{ color: {_c(t.muted)}; }}
+    QSpinBox::up-button, QSpinBox::down-button, QTimeEdit::up-button, QTimeEdit::down-button {{
+        width: 16px; border: none;
+    }}
+    QCheckBox:disabled {{ color: {_c(t.muted)}; }}
 
     QPushButton {{
         border: 1px solid {_c(t.border)}; border-radius: 6px; padding: 6px 14px;

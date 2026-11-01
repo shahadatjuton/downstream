@@ -13,7 +13,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 
-$version = & $py -c "import re,pathlib;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', pathlib.Path(r'$root\src\idm\__init__.py').read_text()).group(1))"
+$version = (& $py -c "import sys; sys.path.insert(0, r'$root\src'); import idm; print(idm.__version__)").Trim()
+if (-not $version) { throw "could not read __version__ from src\idm\__init__.py" }
 Write-Host "Building IDM Clone $version"
 
 # Version resources for the exe properties

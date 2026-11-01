@@ -12,7 +12,7 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPoint, QRectF, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -70,6 +70,7 @@ from .models import (
     COL_SIZE,
     COL_SPEED,
     COL_STATUS,
+    COLUMNS,
     ROW_HEIGHT,
     ProgressDelegate,
     TaskFilter,
@@ -117,6 +118,17 @@ DOWNLOADABLE_HINT_EXTS = {
 }
 
 SIDEBAR_ICONS = {TaskFilter.ALL: "list", TaskFilter.ACTIVE: "clock", TaskFilter.DONE: "check", **CATEGORY_ICONS}
+# Default widths; "File name" stretches to take whatever is left (at least NAME_MIN_WIDTH).
+COLUMN_WIDTHS = {
+    COL_SIZE: 80,
+    COL_STATUS: 130,
+    COL_PROGRESS: 210,
+    COL_SPEED: 85,
+    COL_ETA: 80,
+    COL_DESC: 140,
+    COL_ADDED: 135,
+}
+NAME_MIN_WIDTH = 200
 IconRole = Qt.ItemDataRole.UserRole
 CountRole = Qt.ItemDataRole.UserRole + 1
 
@@ -255,7 +267,8 @@ class MainWindow(QMainWindow):
         self.theme = theme
         self.setWindowTitle("IDM Clone")
         self.setWindowIcon(make_app_icon())
-        self.resize(1160, 700)
+        self.resize(1280, 780)
+        self.setMinimumSize(860, 540)
         self.setAcceptDrops(True)
 
         self._bridge = _EventBridge(self)
@@ -279,6 +292,7 @@ class MainWindow(QMainWindow):
         self._build_statusbar()
         self._build_tray()
         self._build_shortcuts()
+        self._restore_ui_state()
         self._last_clip = ""
         QApplication.clipboard().dataChanged.connect(self._on_clipboard)
 
@@ -477,27 +491,25 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        self.table.setWordWrap(False)  # one line per cell; long names elide instead of wrapping
         self.table.setIconSize(QSize(20, 20))
         self.table.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        header.setMinimumSectionSize(60)
+        header.setMinimumSectionSize(50)
+        header.setStretchLastSection(False)
         header.setHighlightSections(False)
         header.setSectionsClickable(True)
-        for col, width in (
-            (COL_SIZE, 90),
-            (COL_STATUS, 150),
-            (COL_PROGRESS, 240),
-            (COL_SPEED, 100),
-            (COL_ETA, 90),
-            (COL_DESC, 160),
-            (COL_ADDED, 130),
-        ):
-            self.table.setColumnWidth(col, width)
+        header.setSectionsMovable(True)
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._header_menu)
+        self._reset_columns(keep_sort=True)
         self.table.setSortingEnabled(True)
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)  # insertion (queue) order until the user sorts
-        header.setToolTip("Click a column to sort. Click the empty area of the header to restore queue order.")
+        header.setToolTip(
+            "Click a column to sort; click the empty header area to restore queue order. Right-click to choose columns."
+        )
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.doubleClicked.connect(lambda _i: self.open_file_selected())
@@ -542,8 +554,80 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([170, 990])
         splitter.setHandleWidth(1)
+        splitter.setChildrenCollapsible(False)
+        self.splitter = splitter
         self.setCentralWidget(splitter)
         self.details.set_task(None)
+
+    # ------------------------------------------------------------- columns
+    def _header_menu(self, pos: QPoint) -> None:
+        """Right-click on the header: show or hide columns, reset the layout."""
+        menu = QMenu(self)
+        for col, name in enumerate(COLUMNS):
+            if col == COL_NAME:
+                continue
+            a = menu.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(not self.table.isColumnHidden(col))
+            a.toggled.connect(partial(self._set_column_visible, col))
+        menu.addSeparator()
+        menu.addAction("Reset columns", self._reset_columns)
+        menu.exec(self.table.horizontalHeader().mapToGlobal(pos))
+
+    def _set_column_visible(self, col: int, visible: bool) -> None:
+        self.table.setColumnHidden(col, not visible)
+
+    def _reset_columns(self, keep_sort: bool = False) -> None:
+        header = self.table.horizontalHeader()
+        for col in range(len(COLUMNS)):
+            self.table.setColumnHidden(col, False)
+            if header.visualIndex(col) != col:
+                header.moveSection(header.visualIndex(col), col)
+        for col, width in COLUMN_WIDTHS.items():
+            self.table.setColumnWidth(col, width)
+        header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
+        if not keep_sort:
+            header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+
+    # ------------------------------------------------------------- UI state
+    @staticmethod
+    def _ui_settings() -> QSettings:
+        """Window layout lives in ui.ini inside the data folder (so portable mode carries it along)."""
+        from ..engine.settings import app_data_dir
+
+        return QSettings(str(app_data_dir() / "ui.ini"), QSettings.Format.IniFormat)
+
+    def _restore_ui_state(self) -> None:
+        try:
+            s = self._ui_settings()
+            geo = s.value("window/geometry")
+            if geo is not None:
+                self.restoreGeometry(geo)
+            sizes = s.value("window/splitter")
+            if sizes:
+                self.splitter.setSizes([int(x) for x in sizes])
+            header = s.value("table/header")
+            if header is not None and self.table.horizontalHeader().restoreState(header):
+                self.table.horizontalHeader().setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
+                self.table.horizontalHeader().setSectionsMovable(True)
+            details = s.value("window/details")
+            if details is not None:
+                shown = str(details).lower() in ("true", "1")
+                self.act_details.setChecked(shown)
+                self.details.setVisible(shown)
+        except Exception:  # noqa: BLE001 - a corrupt ini must never stop the app from opening
+            log.exception("could not restore the window layout")
+
+    def _save_ui_state(self) -> None:
+        try:
+            s = self._ui_settings()
+            s.setValue("window/geometry", self.saveGeometry())
+            s.setValue("window/splitter", self.splitter.sizes())
+            s.setValue("table/header", self.table.horizontalHeader().saveState())
+            s.setValue("window/details", self.act_details.isChecked())
+            s.sync()
+        except Exception:  # noqa: BLE001
+            log.exception("could not save the window layout")
 
     def _build_empty_state(self) -> None:
         """Overlay on the table viewport: a welcome + setup card when the list is empty."""
@@ -1286,6 +1370,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         really = getattr(self, "_really_quit", False)
+        self._save_ui_state()
         if self.tray and not really and any(t.status == Status.DOWNLOADING for t in self.manager.snapshot()):
             self.hide()
             self.tray.showMessage(

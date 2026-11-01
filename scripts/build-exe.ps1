@@ -1,7 +1,7 @@
 # Builds a single self-contained "IDM Clone.exe" into the release\ folder.
 # The exe needs no Python and no other files; copy it anywhere.
 #
-#   powershell -ExecutionPolicy Bypass -File scriptsuild-exe.ps1
+#   powershell -ExecutionPolicy Bypass -File scripts\build-exe.ps1
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

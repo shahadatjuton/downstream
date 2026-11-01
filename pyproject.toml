@@ -37,8 +37,8 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3", "ruff>=0.5", "mypy>=1.10", "pyinstaller>=6"]
 
 [project.urls]
-Homepage = "https://github.com/shahadatjuton/idm-clone"
-Issues = "https://github.com/shahadatjuton/idm-clone/issues"
+Homepage = "https://github.com/shahadatjuton/downstream"
+Issues = "https://github.com/shahadatjuton/downstream/issues"
 
 [project.scripts]
 idm-clone = "idm.__main__:main"

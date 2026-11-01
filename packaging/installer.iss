@@ -18,9 +18,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=IDM Clone open-source project
-AppPublisherURL=https://github.com/shahadatjuton/idm-clone
-AppSupportURL=https://github.com/shahadatjuton/idm-clone/issues
-AppUpdatesURL=https://github.com/shahadatjuton/idm-clone/releases
+AppPublisherURL=https://github.com/shahadatjuton/downstream
+AppSupportURL=https://github.com/shahadatjuton/downstream/issues
+AppUpdatesURL=https://github.com/shahadatjuton/downstream/releases
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -91,13 +91,15 @@ Type: filesandordirs; Name: "{app}\extension"
 [Code]
 function ExtensionId(): String;
 var
+  Raw: AnsiString;  // LoadStringFromFile needs an AnsiString var in Unicode Inno Setup
   Json, Marker: String;
   P: Integer;
 begin
   // The pinned extension id lives in extension\.extension-key.json as "id": "...."
   Result := '';
-  if LoadStringFromFile(ExpandConstant('{app}\extension\.extension-key.json'), Json) then
+  if LoadStringFromFile(ExpandConstant('{app}\extension\.extension-key.json'), Raw) then
   begin
+    Json := String(Raw);
     Marker := '"id": "';
     P := Pos(Marker, Json);
     if P > 0 then
